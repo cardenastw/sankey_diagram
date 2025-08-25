@@ -8,11 +8,11 @@ from visualizer import FlowPathVisualizer
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze and visualize user flow paths')
-    parser.add_argument('--data', type=str, default='example_data.json',
+    parser.add_argument('--data', type=str, default='example_data_with_context.json',
                       help='Path to data file (JSON or CSV)')
-    parser.add_argument('--start', type=str, required=True,
+    parser.add_argument('--start', type=str, 
                       help='Starting screen name')
-    parser.add_argument('--end', type=str, required=True,
+    parser.add_argument('--end', type=str, 
                       help='Ending screen name')
     parser.add_argument('--top-paths', type=int, default=5,
                       help='Number of top paths to display (default: 5)')
@@ -23,12 +23,44 @@ def main():
                       help='Directory to save visualizations')
     parser.add_argument('--show-stats', action='store_true',
                       help='Show flow statistics')
+    parser.add_argument('--include-context', action='store_true',
+                      help='Include preceding context steps in the analysis')
+    parser.add_argument('--context-steps', type=int, default=3,
+                      help='Number of preceding steps to include as context (default: 3)')
+    parser.add_argument('--split-by-source', action='store_true',
+                      help='Split analysis by traffic source (SEO, direct, campaign, etc.)')
+    parser.add_argument('--split-by', type=str, 
+                      help='Field name to split analysis by (e.g., user_type, campaign_id, device)')
+    parser.add_argument('--split-by-multiple', type=str, nargs='+',
+                      help='Multiple field names to split by (creates combinations)')
+    parser.add_argument('--list-fields', action='store_true',
+                      help='List all available fields for segmentation')
     
     args = parser.parse_args()
     
     print(f"Loading data from {args.data}...")
     analyzer = FlowPathAnalyzer()
     analyzer.load_data(args.data)
+    
+    # Handle listing available fields
+    if args.list_fields:
+        available_fields = analyzer.get_available_fields()
+        if available_fields:
+            print("\nAvailable fields for segmentation:")
+            for field in available_fields:
+                values = analyzer.get_field_values(field)
+                print(f"  - {field}: {len(values)} unique values")
+                if len(values) <= 10:
+                    print(f"    Values: {', '.join(map(str, values[:10]))}")
+                else:
+                    print(f"    Sample values: {', '.join(map(str, values[:5]))}...")
+        else:
+            print("\nNo segmentation fields found in the data.")
+        return
+    
+    # Check if start and end are provided for path analysis
+    if not args.start or not args.end:
+        parser.error("--start and --end are required for path analysis")
     
     if args.show_stats:
         print("\n=== Flow Statistics ===")
@@ -42,15 +74,209 @@ def main():
             print(f"  - {screen}: {count} visits")
     
     print(f"\nFinding paths from '{args.start}' to '{args.end}'...")
-    paths = analyzer.find_paths(args.start, args.end)
     
-    if not paths:
-        print(f"No paths found from '{args.start}' to '{args.end}'")
-        return
+    # Handle dynamic field splitting
+    if args.split_by:
+        print(f"\nAnalyzing paths by {args.split_by}...")
+        results_by_field = analyzer.find_paths_by_field(
+            args.start, args.end, args.split_by,
+            include_context=args.include_context,
+            context_steps=args.context_steps
+        )
+        
+        if not results_by_field:
+            print(f"No paths found from '{args.start}' to '{args.end}'")
+            return
+        
+        # Display results for each field value
+        for value, result in sorted(results_by_field.items(), 
+                                   key=lambda x: x[1]['total_sessions'], 
+                                   reverse=True):
+            print(f"\n{'='*60}")
+            print(f"{args.split_by}: {value}")
+            print(f"Total Sessions: {result['total_sessions']}")
+            print(f"Sessions with Path: {result['sessions_with_path']}")
+            print(f"Conversion Rate: {result['conversion_rate']:.2f}%")
+            
+            if result['paths']:
+                if args.include_context and 'full_journeys' in result:
+                    print(f"\nTop {min(args.top_paths, len(result['full_journeys']))} complete journeys:")
+                    for i, (journey, count) in enumerate(result['full_journeys'][:args.top_paths], 1):
+                        start_idx = journey.index(args.start) if args.start in journey else 0
+                        formatted_journey = []
+                        for j, screen in enumerate(journey):
+                            if j < start_idx:
+                                formatted_journey.append(f"[{screen}]")
+                            else:
+                                formatted_journey.append(screen)
+                        print(f"  {i}. {' -> '.join(formatted_journey)} (Count: {count})")
+                else:
+                    print(f"\nTop {min(args.top_paths, len(result['paths']))} paths:")
+                    for i, (path, count) in enumerate(result['paths'][:args.top_paths], 1):
+                        print(f"  {i}. {' -> '.join(path)} (Count: {count})")
+        
+        # Store paths for visualization
+        paths = []
+        for field_result in results_by_field.values():
+            paths.extend(field_result['paths'])
+        
+        # Deduplicate paths
+        path_dict = {}
+        for path, count in paths:
+            path_str = ' -> '.join(path)
+            path_dict[path_str] = path_dict.get(path_str, 0) + count
+        
+        paths = [(path.split(' -> '), count) for path, count in 
+                sorted(path_dict.items(), key=lambda x: x[1], reverse=True)]
     
-    print(f"\nTop {min(args.top_paths, len(paths))} paths:")
-    for i, (path, count) in enumerate(paths[:args.top_paths], 1):
-        print(f"{i}. {' -> '.join(path)} (Count: {count})")
+    elif args.split_by_multiple:
+        print(f"\nAnalyzing paths by combination of: {', '.join(args.split_by_multiple)}...")
+        results_by_combo = analyzer.find_paths_by_multiple_fields(
+            args.start, args.end, args.split_by_multiple,
+            include_context=args.include_context,
+            context_steps=args.context_steps
+        )
+        
+        if not results_by_combo:
+            print(f"No paths found from '{args.start}' to '{args.end}'")
+            return
+        
+        # Display top combinations
+        sorted_combos = sorted(results_by_combo.items(), 
+                             key=lambda x: x[1]['conversion_rate'], 
+                             reverse=True)
+        
+        for combo_key, result in sorted_combos[:10]:  # Show top 10 combinations
+            if result['sessions_with_path'] > 0:
+                print(f"\n{'='*60}")
+                print(f"Combination: {combo_key}")
+                print(f"Total Sessions: {result['total_sessions']}")
+                print(f"Sessions with Path: {result['sessions_with_path']}")
+                print(f"Conversion Rate: {result['conversion_rate']:.2f}%")
+                
+                if result['paths']:
+                    if args.include_context and 'full_journeys' in result:
+                        print(f"\nTop complete journeys (with context):")
+                        for i, (journey, count) in enumerate(result['full_journeys'][:3], 1):
+                            start_idx = journey.index(args.start) if args.start in journey else 0
+                            formatted_journey = []
+                            for j, screen in enumerate(journey):
+                                if j < start_idx:
+                                    formatted_journey.append(f"[{screen}]")
+                                else:
+                                    formatted_journey.append(screen)
+                            print(f"  {i}. {' -> '.join(formatted_journey)} (Count: {count})")
+                    else:
+                        print(f"\nTop paths:")
+                        for i, (path, count) in enumerate(result['paths'][:3], 1):
+                            print(f"  {i}. {' -> '.join(path)} (Count: {count})")
+        
+        # Aggregate paths for visualization
+        paths = []
+        for combo_result in results_by_combo.values():
+            paths.extend(combo_result['paths'])
+        
+        path_dict = {}
+        for path, count in paths:
+            path_str = ' -> '.join(path)
+            path_dict[path_str] = path_dict.get(path_str, 0) + count
+        
+        paths = [(path.split(' -> '), count) for path, count in 
+                sorted(path_dict.items(), key=lambda x: x[1], reverse=True)]
+    
+    elif args.split_by_source:
+        print("\nAnalyzing paths by traffic source...")
+        results_by_source = analyzer.find_paths_by_traffic_source(
+            args.start, args.end, 
+            include_context=args.include_context,
+            context_steps=args.context_steps
+        )
+        
+        if not results_by_source:
+            print(f"No paths found from '{args.start}' to '{args.end}'")
+            return
+        
+        # Display results for each traffic source
+        for source, result in sorted(results_by_source.items(), 
+                                    key=lambda x: x[1]['total_sessions'], 
+                                    reverse=True):
+            print(f"\n{'='*60}")
+            print(f"Traffic Source: {source.upper()}")
+            print(f"Total Sessions: {result['total_sessions']}")
+            print(f"Sessions with Path: {result['sessions_with_path']}")
+            print(f"Conversion Rate: {result['conversion_rate']:.2f}%")
+            
+            if result['paths']:
+                if args.include_context and 'full_journeys' in result:
+                    print(f"\nTop {min(args.top_paths, len(result['full_journeys']))} complete journeys:")
+                    for i, (journey, count) in enumerate(result['full_journeys'][:args.top_paths], 1):
+                        start_idx = journey.index(args.start) if args.start in journey else 0
+                        formatted_journey = []
+                        for j, screen in enumerate(journey):
+                            if j < start_idx:
+                                formatted_journey.append(f"[{screen}]")
+                            else:
+                                formatted_journey.append(screen)
+                        print(f"  {i}. {' -> '.join(formatted_journey)} (Count: {count})")
+                else:
+                    print(f"\nTop {min(args.top_paths, len(result['paths']))} paths:")
+                    for i, (path, count) in enumerate(result['paths'][:args.top_paths], 1):
+                        print(f"  {i}. {' -> '.join(path)} (Count: {count})")
+        
+        # Store the paths for visualization
+        # We'll use the combined paths from all sources for the default visualizations
+        paths = []
+        for source_result in results_by_source.values():
+            paths.extend(source_result['paths'])
+        
+        # Sort and deduplicate
+        path_dict = {}
+        for path, count in paths:
+            path_str = ' -> '.join(path)
+            path_dict[path_str] = path_dict.get(path_str, 0) + count
+        
+        paths = [(path.split(' -> '), count) for path, count in 
+                sorted(path_dict.items(), key=lambda x: x[1], reverse=True)]
+        
+    elif args.include_context:
+        print(f"Including up to {args.context_steps} preceding context steps...")
+        result = analyzer.find_paths_with_context(args.start, args.end, 
+                                                 context_steps=args.context_steps)
+        paths = result['paths']
+        full_journeys = result['full_journeys']
+        
+        if not paths:
+            print(f"No paths found from '{args.start}' to '{args.end}'")
+            return
+        
+        print(f"\nTop {min(args.top_paths, len(full_journeys))} complete journeys (with context):")
+        for i, (journey, count) in enumerate(full_journeys[:args.top_paths], 1):
+            # Find where the main path starts
+            start_idx = journey.index(args.start) if args.start in journey else 0
+            
+            # Format the journey with visual distinction
+            formatted_journey = []
+            for j, screen in enumerate(journey):
+                if j < start_idx:
+                    formatted_journey.append(f"[{screen}]")  # Context in brackets
+                else:
+                    formatted_journey.append(screen)  # Main path normal
+            
+            print(f"{i}. {' -> '.join(formatted_journey)} (Count: {count})")
+        
+        print(f"\nMain paths (without context):")
+        for i, (path, count) in enumerate(paths[:args.top_paths], 1):
+            print(f"{i}. {' -> '.join(path)} (Count: {count})")
+    else:
+        paths = analyzer.find_paths(args.start, args.end)
+        
+        if not paths:
+            print(f"No paths found from '{args.start}' to '{args.end}'")
+            return
+        
+        print(f"\nTop {min(args.top_paths, len(paths))} paths:")
+        for i, (path, count) in enumerate(paths[:args.top_paths], 1):
+            print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
     visualizer = FlowPathVisualizer(analyzer)
     
@@ -65,11 +291,38 @@ def main():
         )
     
     if args.viz_type in ['sankey', 'all']:
-        print("Creating Sankey diagram...")
-        visualizer.create_interactive_sankey(
-            args.start, args.end, args.top_paths,
-            f"{args.output_dir}/sankey_diagram.html"
-        )
+        if args.split_by_multiple:
+            print(f"\nCreating Sankey diagrams by combination of: {', '.join(args.split_by_multiple)}...")
+            visualizer.create_sankey_charts_by_multiple_fields(
+                args.start, args.end, args.split_by_multiple, args.top_paths,
+                args.output_dir
+            )
+        elif args.split_by:
+            print(f"\nCreating Sankey diagrams by {args.split_by}...")
+            visualizer.create_sankey_charts_by_field(
+                args.start, args.end, args.split_by, args.top_paths,
+                args.output_dir,
+                include_context=args.include_context,
+                context_steps=args.context_steps
+            )
+        elif args.split_by_source:
+            print("\nCreating Sankey diagrams by traffic source...")
+            visualizer.create_sankey_charts_by_field(
+                args.start, args.end, 'traffic_source', args.top_paths,
+                args.output_dir
+            )
+        elif args.include_context:
+            print("Creating Sankey diagram...")
+            visualizer.create_interactive_sankey_with_context(
+                args.start, args.end, args.top_paths,
+                context_steps=args.context_steps,
+                output_file=f"{args.output_dir}/sankey_diagram.html"
+            )
+        else:
+            visualizer.create_interactive_sankey(
+                args.start, args.end, args.top_paths,
+                f"{args.output_dir}/sankey_diagram.html"
+            )
     
     if args.viz_type in ['heatmap', 'all']:
         print("Creating transition heatmap...")
