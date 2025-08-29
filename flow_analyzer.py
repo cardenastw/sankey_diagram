@@ -527,7 +527,7 @@ class FlowPathAnalyzer:
                 max_depth = 3
                 max_branches = 3
             else:  # 'fast' or default
-                max_chain_length = 5
+                max_chain_length = 8
                 max_starting_chunks = 15
                 max_depth = 4
                 max_branches = 2
