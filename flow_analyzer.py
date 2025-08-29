@@ -260,10 +260,10 @@ class FlowPathAnalyzer:
                 progress = 30.0 + (item_idx / total_items) * 65.0  # 30% to 95%
                 progress_callback(f"Processing aggregated chunks... ({item_idx + 1}/{total_items})", progress)
     
-    def find_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
+    def find_paths(self, start_screen: str, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
             # Chain chunks together to find longer paths
-            return self._find_chained_paths(start_screen, end_screen, max_length)
+            return self._find_chained_paths(start_screen, end_screen, max_length, max_paths)
         else:
             # Original implementation for raw event data
             paths = []
@@ -284,46 +284,41 @@ class FlowPathAnalyzer:
             
             return [(path.split(' -> '), count) for path, count in sorted_paths]
     
-    def _find_chained_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
+    def _find_chained_paths(self, start_screen: str, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
         """Chain together pre-aggregated chunks to find longer paths."""
         from collections import defaultdict, deque
         
-        # Build a graph of chunk connections
-        chunk_graph = defaultdict(list)
+        # Build a graph of chunk connections (optimized)
         chunks_starting_with = defaultdict(list)
         chunks_ending_with = defaultdict(list)
         
         # Organize chunks by their start and end screens
         for chunk in self.path_chunks:
             path = chunk['path']
-            count = chunk['count']
+            if len(path) < 2:
+                continue
             start = path[0]
             end = path[-1]
             
             chunks_starting_with[start].append(chunk)
             chunks_ending_with[end].append(chunk)
-            
-            # Create connections between chunks that can be chained
-            for other_chunk in self.path_chunks:
-                other_path = other_chunk['path']
-                # If this chunk ends where another begins, they can be chained
-                if len(path) > 1 and len(other_path) > 1 and path[-1] == other_path[0]:
-                    chunk_graph[tuple(path)].append(other_chunk)
         
         # Use BFS to find all possible chained paths
         found_paths = {}
         queue = deque()
+        max_depth = min(max_length // 2, 5)  # Limit exploration depth
         
-        # Start with chunks that begin with start_screen
-        for chunk in chunks_starting_with[start_screen]:
+        # Start with chunks that begin with start_screen (sorted by count for better early results)
+        starting_chunks = sorted(chunks_starting_with[start_screen], key=lambda x: x['count'], reverse=True)
+        for chunk in starting_chunks:
             path = chunk['path']
             count = chunk['count']
-            queue.append((path, count, {tuple(path)}))  # path, count, visited_chunks
+            queue.append((path, count, {tuple(path)}, 1))  # path, count, visited_chunks, depth
         
         while queue:
-            current_path, current_count, visited_chunks = queue.popleft()
+            current_path, current_count, visited_chunks, depth = queue.popleft()
             
-            if len(current_path) > max_length:
+            if len(current_path) > max_length or depth > max_depth:
                 continue
                 
             # If we've reached the end screen, record this path
@@ -332,11 +327,17 @@ class FlowPathAnalyzer:
                 if path_str not in found_paths:
                     found_paths[path_str] = 0
                 found_paths[path_str] += current_count
+                
+                # Early termination: stop if we have enough paths
+                if len(found_paths) >= max_paths:
+                    break
                 continue
             
             # Try to extend this path with compatible chunks
             current_end = current_path[-1]
-            for next_chunk in chunks_starting_with[current_end]:
+            # Sort next chunks by count for better early results
+            next_chunks = sorted(chunks_starting_with[current_end], key=lambda x: x['count'], reverse=True)
+            for next_chunk in next_chunks:
                 next_path = next_chunk['path']
                 next_chunk_tuple = tuple(next_path)
                 
@@ -349,7 +350,7 @@ class FlowPathAnalyzer:
                     chained_count = min(current_count, next_chunk['count'])  # Use minimum count
                     new_visited = visited_chunks | {next_chunk_tuple}
                     
-                    queue.append((chained_path, chained_count, new_visited))
+                    queue.append((chained_path, chained_count, new_visited, depth + 1))
         
         # Also include direct chunks that match start->end
         for path_str, count in self.flow_paths.items():
