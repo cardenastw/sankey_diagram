@@ -41,17 +41,26 @@ def main():
                       help='Start interactive mode for multiple queries')
     parser.add_argument('--pre-aggregated', action='store_true',
                       help='Treat data as pre-aggregated paths with counts instead of raw events')
+    parser.add_argument('--no-progress', action='store_true',
+                      help='Disable progress bars and verbose loading messages')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                      help='Minimal output, disable all progress indicators')
     
     args = parser.parse_args()
     
-    print(f"Loading data from {args.data}...")
-    analyzer = FlowPathAnalyzer(is_pre_aggregated=args.pre_aggregated)
+    # Determine progress settings
+    show_progress = not args.no_progress and not args.quiet
+    
+    if not args.quiet:
+        print(f"Loading data from {args.data}...")
+    
+    analyzer = FlowPathAnalyzer(is_pre_aggregated=args.pre_aggregated, show_progress=show_progress)
     analyzer.load_data(args.data)
     
     # Handle interactive mode
     if args.interactive:
         from interactive import InteractiveFlowAnalyzer
-        interactive_analyzer = InteractiveFlowAnalyzer(args.data, is_pre_aggregated=args.pre_aggregated)
+        interactive_analyzer = InteractiveFlowAnalyzer(args.data, is_pre_aggregated=args.pre_aggregated, show_progress=show_progress)
         interactive_analyzer.run()
         return
     
@@ -73,7 +82,8 @@ def main():
     
     # Handle most common paths to a screen
     if args.most_common_to:
-        print(f"\nFinding most common paths leading to '{args.most_common_to}'...")
+        if not args.quiet:
+            print(f"\nFinding most common paths leading to '{args.most_common_to}'...")
         most_common_paths = analyzer.find_most_common_paths_to_screen(
             args.most_common_to, 
             top_n=args.top_paths
@@ -103,11 +113,13 @@ def main():
         for screen, count in stats['most_visited_screens'][:5]:
             print(f"  - {screen}: {count} visits")
     
-    print(f"\nFinding paths from '{args.start}' to '{args.end}'...")
+    if not args.quiet:
+        print(f"\nFinding paths from '{args.start}' to '{args.end}'...")
     
     # Handle dynamic field splitting
     if args.split_by:
-        print(f"\nAnalyzing paths by {args.split_by}...")
+        if not args.quiet:
+            print(f"\nAnalyzing paths by {args.split_by}...")
         results_by_field = analyzer.find_paths_by_field(
             args.start, args.end, args.split_by,
             include_context=args.include_context,
@@ -160,7 +172,8 @@ def main():
                 sorted(path_dict.items(), key=lambda x: x[1], reverse=True)]
     
     elif args.split_by_multiple:
-        print(f"\nAnalyzing paths by combination of: {', '.join(args.split_by_multiple)}...")
+        if not args.quiet:
+            print(f"\nAnalyzing paths by combination of: {', '.join(args.split_by_multiple)}...")
         results_by_combo = analyzer.find_paths_by_multiple_fields(
             args.start, args.end, args.split_by_multiple,
             include_context=args.include_context,
@@ -215,7 +228,8 @@ def main():
                 sorted(path_dict.items(), key=lambda x: x[1], reverse=True)]
     
     elif args.split_by_source:
-        print("\nAnalyzing paths by traffic source...")
+        if not args.quiet:
+            print("\nAnalyzing paths by traffic source...")
         results_by_source = analyzer.find_paths_by_traffic_source(
             args.start, args.end, 
             include_context=args.include_context,
@@ -269,7 +283,8 @@ def main():
                 sorted(path_dict.items(), key=lambda x: x[1], reverse=True)]
         
     elif args.include_context:
-        print(f"Including up to {args.context_steps} preceding context steps...")
+        if not args.quiet:
+            print(f"Including up to {args.context_steps} preceding context steps...")
         result = analyzer.find_paths_with_context(args.start, args.end, 
                                                  context_steps=args.context_steps)
         paths = result['paths']
@@ -318,7 +333,8 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     if args.viz_type in ['flow', 'all']:
-        print("\nCreating flow diagram...")
+        if not args.quiet:
+            print("\nCreating flow diagram...")
         visualizer.create_flow_diagram(
             args.start, args.end, args.top_paths,
             f"{args.output_dir}/flow_diagram.png"
@@ -326,13 +342,15 @@ def main():
     
     if args.viz_type in ['sankey', 'all']:
         if args.split_by_multiple:
-            print(f"\nCreating Sankey diagrams by combination of: {', '.join(args.split_by_multiple)}...")
+            if not args.quiet:
+                print(f"\nCreating Sankey diagrams by combination of: {', '.join(args.split_by_multiple)}...")
             visualizer.create_sankey_charts_by_multiple_fields(
                 args.start, args.end, args.split_by_multiple, args.top_paths,
                 args.output_dir
             )
         elif args.split_by:
-            print(f"\nCreating Sankey diagrams by {args.split_by}...")
+            if not args.quiet:
+                print(f"\nCreating Sankey diagrams by {args.split_by}...")
             visualizer.create_sankey_charts_by_field(
                 args.start, args.end, args.split_by, args.top_paths,
                 args.output_dir,
@@ -340,13 +358,15 @@ def main():
                 context_steps=args.context_steps
             )
         elif args.split_by_source:
-            print("\nCreating Sankey diagrams by traffic source...")
+            if not args.quiet:
+                print("\nCreating Sankey diagrams by traffic source...")
             visualizer.create_sankey_charts_by_field(
                 args.start, args.end, 'traffic_source', args.top_paths,
                 args.output_dir
             )
         elif args.include_context:
-            print("Creating Sankey diagram...")
+            if not args.quiet:
+                print("Creating Sankey diagram...")
             visualizer.create_interactive_sankey_with_context(
                 args.start, args.end, args.top_paths,
                 context_steps=args.context_steps,
@@ -359,23 +379,26 @@ def main():
             )
     
     if args.viz_type in ['heatmap', 'all']:
-        print("Creating transition heatmap...")
+        if not args.quiet:
+            print("Creating transition heatmap...")
         visualizer.create_heatmap(f"{args.output_dir}/heatmap.html")
     
     if args.viz_type in ['network', 'all']:
-        print("Creating network graph...")
+        if not args.quiet:
+            print("Creating network graph...")
         visualizer.create_network_graph(
             min_transitions=1,
             output_file=f"{args.output_dir}/network_graph.html"
         )
     
-    print("\nVisualization complete! Check the output directory for results.")
+    if not args.quiet:
+        print("\nVisualization complete! Check the output directory for results.")
 
 
 def demo():
     print("Running demo with example data...")
     
-    analyzer = FlowPathAnalyzer()
+    analyzer = FlowPathAnalyzer(show_progress=True)
     
     sample_data = [
         {"session_id": "s1", "screen": "Home", "timestamp": "2024-01-01T10:00:00"},
