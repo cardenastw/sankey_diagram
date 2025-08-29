@@ -571,36 +571,65 @@ class FlowPathVisualizer:
             fig.show()
     
     def create_heatmap(self, output_file: Optional[str] = None):
-        matrix = self.analyzer.export_transition_matrix()
+        probability_matrix = self.analyzer.export_transition_probability_matrix()
         
-        if matrix.empty:
+        if probability_matrix.empty:
             print("No transition data available")
             return
         
+        # Create text labels showing probabilities as percentages
+        text_matrix = probability_matrix.applymap(lambda x: f"{x:.1%}" if x > 0 else "")
+        
+        # Create hover text with more detail
+        hover_text = []
+        for i in range(len(probability_matrix.index)):
+            hover_row = []
+            for j in range(len(probability_matrix.columns)):
+                from_screen = probability_matrix.index[i]
+                to_screen = probability_matrix.columns[j]
+                prob = probability_matrix.iloc[i, j]
+                if prob > 0:
+                    hover_row.append(f"From: {from_screen}<br>To: {to_screen}<br>Probability: {prob:.2%}")
+                else:
+                    hover_row.append(f"From: {from_screen}<br>To: {to_screen}<br>No transitions")
+            hover_text.append(hover_row)
+        
         fig = go.Figure(data=go.Heatmap(
-            z=matrix.values,
-            x=matrix.columns,
-            y=matrix.index,
+            z=probability_matrix.values,
+            x=probability_matrix.columns,
+            y=probability_matrix.index,
             colorscale='Blues',
-            text=matrix.values,
+            text=text_matrix.values,
             texttemplate='%{text}',
             textfont={"size": 10},
-            hoverongaps=False
+            hoverongaps=False,
+            hovertemplate='%{hovertext}<extra></extra>',
+            hovertext=hover_text,
+            zmin=0,
+            zmax=1
         ))
         
         fig.update_layout(
-            title="Screen Transition Heatmap",
+            title="Screen Transition Probability Heatmap<br><sub>Shows probability of moving from one screen to another</sub>",
             xaxis_title="To Screen",
             yaxis_title="From Screen",
-            height=max(400, len(matrix) * 30),
-            width=max(600, len(matrix.columns) * 30),
+            height=max(400, len(probability_matrix) * 30),
+            width=max(600, len(probability_matrix.columns) * 30),
             xaxis={'side': 'bottom'},
             yaxis={'autorange': 'reversed'}
         )
         
+        # Update colorbar to show percentages
+        fig.update_coloraxes(
+            colorbar=dict(
+                title="Transition<br>Probability",
+                tickformat=".0%"
+            )
+        )
+        
         if output_file:
             fig.write_html(output_file)
-            print(f"Heatmap saved to {output_file}")
+            print(f"Probability heatmap saved to {output_file}")
         else:
             fig.show()
     
@@ -1740,6 +1769,76 @@ class FlowPathVisualizer:
         if output_file:
             fig.write_html(output_file)
             print(f"Traffic source Sankey diagram saved to {output_file}")
+        else:
+            fig.show()
+    
+    def create_simulation_comparison_chart(self, comparison_results: dict, 
+                                          output_file: Optional[str] = None):
+        """Create comparison chart for Monte Carlo simulation results.
+        
+        Args:
+            comparison_results: Results from MonteCarloSimulator.compare_scenarios()
+            output_file: Optional file path to save the chart
+        """
+        conversion_changes = comparison_results['conversion_changes']
+        
+        if not conversion_changes:
+            print("No conversion data available for comparison")
+            return
+        
+        # Prepare data for plotting
+        goals = list(conversion_changes.keys())
+        baseline_rates = [conversion_changes[goal]['baseline'] for goal in goals]
+        modified_rates = [conversion_changes[goal]['modified'] for goal in goals]
+        
+        # Create subplot with bar chart
+        fig = go.Figure()
+        
+        # Add baseline bars
+        fig.add_trace(go.Bar(
+            name='Baseline',
+            x=goals,
+            y=baseline_rates,
+            marker_color='lightblue',
+            text=[f"{rate:.1f}%" for rate in baseline_rates],
+            textposition='auto'
+        ))
+        
+        # Add modified bars
+        fig.add_trace(go.Bar(
+            name='Modified Scenario',
+            x=goals,
+            y=modified_rates,
+            marker_color='darkblue',
+            text=[f"{rate:.1f}%" for rate in modified_rates],
+            textposition='auto'
+        ))
+        
+        # Add change annotations
+        for i, goal in enumerate(goals):
+            change = conversion_changes[goal]['percent_change']
+            color = 'green' if change > 0 else 'red'
+            fig.add_annotation(
+                x=goal,
+                y=max(baseline_rates[i], modified_rates[i]) + 2,
+                text=f"{change:+.1f}%",
+                showarrow=False,
+                font=dict(color=color, size=12, family="Arial Black")
+            )
+        
+        # Update layout
+        fig.update_layout(
+            title=f"Monte Carlo Simulation: Conversion Rate Comparison<br><sub>Based on {comparison_results['n_simulations']:,} simulations each</sub>",
+            xaxis_title="Goal Screens",
+            yaxis_title="Conversion Rate (%)",
+            barmode='group',
+            height=500,
+            showlegend=True
+        )
+        
+        if output_file:
+            fig.write_html(output_file)
+            print(f"Simulation comparison chart saved to {output_file}")
         else:
             fig.show()
     

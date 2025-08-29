@@ -780,3 +780,30 @@ class FlowPathAnalyzer:
                 matrix.loc[from_screen, to_screen] = count
         
         return matrix
+    
+    def export_transition_probability_matrix(self) -> pd.DataFrame:
+        """Export transition matrix with probabilities instead of raw counts.
+        
+        For each 'from' screen, shows the probability of transitioning to each 'to' screen.
+        Probabilities sum to 1.0 for each row (from screen).
+        
+        Returns:
+            pd.DataFrame: Matrix where each cell contains the probability of transition
+        """
+        screens = sorted(set(list(self.screen_transitions.keys()) + 
+                           [s for transitions in self.screen_transitions.values() 
+                            for s in transitions.keys()]))
+        
+        matrix = pd.DataFrame(0.0, index=screens, columns=screens)
+        
+        for from_screen, transitions in self.screen_transitions.items():
+            # Calculate total transitions from this screen
+            total_from_screen = sum(transitions.values())
+            
+            if total_from_screen > 0:
+                for to_screen, count in transitions.items():
+                    # Calculate probability as count / total_from_screen
+                    probability = count / total_from_screen
+                    matrix.loc[from_screen, to_screen] = probability
+        
+        return matrix
