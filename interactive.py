@@ -5,8 +5,8 @@ from flow_analyzer import FlowPathAnalyzer
 
 
 class InteractiveFlowAnalyzer:
-    def __init__(self, data_source: str):
-        self.analyzer = FlowPathAnalyzer()
+    def __init__(self, data_source: str, is_pre_aggregated: bool = False):
+        self.analyzer = FlowPathAnalyzer(is_pre_aggregated=is_pre_aggregated)
         print(f"Loading data from {data_source}...")
         self.analyzer.load_data(data_source)
         print("Data loaded successfully!")
@@ -121,11 +121,13 @@ def main():
     parser = argparse.ArgumentParser(description='Interactive Flow Path Analysis')
     parser.add_argument('--data', type=str, required=True,
                       help='Data source (file path or URL)')
+    parser.add_argument('--pre-aggregated', action='store_true',
+                      help='Treat data as pre-aggregated paths with counts instead of raw events')
     
     args = parser.parse_args()
     
     try:
-        analyzer = InteractiveFlowAnalyzer(args.data)
+        analyzer = InteractiveFlowAnalyzer(args.data, is_pre_aggregated=args.pre_aggregated)
         analyzer.run()
     except Exception as e:
         print(f"Error: {e}")

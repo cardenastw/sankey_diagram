@@ -7,7 +7,7 @@ import requests
 
 
 class FlowPathAnalyzer:
-    def __init__(self):
+    def __init__(self, is_pre_aggregated: bool = False):
         self.sessions = []
         self.flow_paths = defaultdict(int)
         self.screen_transitions = defaultdict(lambda: defaultdict(int))
@@ -15,6 +15,8 @@ class FlowPathAnalyzer:
         self.traffic_sources = set()
         self.sessions_by_segment = defaultdict(lambda: defaultdict(list))
         self.segment_values = defaultdict(set)
+        self.is_pre_aggregated = is_pre_aggregated
+        self.aggregated_paths = []  # Store pre-aggregated path data
         
     def load_data(self, data_source):
         if isinstance(data_source, str):
@@ -36,7 +38,10 @@ class FlowPathAnalyzer:
         else:
             raise ValueError("Data source must be a file path, URL, or list of dictionaries")
         
-        self._process_sessions(data)
+        if self.is_pre_aggregated:
+            self._process_aggregated_data(data)
+        else:
+            self._process_sessions(data)
         
     def _process_sessions(self, data):
         sessions_dict = defaultdict(list)
@@ -103,24 +108,100 @@ class FlowPathAnalyzer:
                     to_screen = screen_sequence[i + 1]
                     self.screen_transitions[from_screen][to_screen] += 1
     
-    def find_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
-        paths = []
+    def _process_aggregated_data(self, data):
+        """Process pre-aggregated data format.
         
-        for session in self.sessions:
-            screens = session['screens']
+        Expected format:
+        [
+            {
+                "path": ["Home", "Products", "Cart"],
+                "count": 150,
+                "traffic_source": "google_organic",
+                "user_type": "new",
+                "device": "mobile"
+            }
+        ]
+        """
+        for item in data:
+            path = item.get('path', [])
+            count = item.get('count', 1)
             
-            for i, screen in enumerate(screens):
-                if screen == start_screen:
-                    for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                        if screens[j] == end_screen:
-                            path = screens[i:j+1]
-                            path_str = ' -> '.join(path)
-                            self.flow_paths[path_str] += 1
-                            break
-        
-        sorted_paths = sorted(self.flow_paths.items(), key=lambda x: x[1], reverse=True)
-        
-        return [(path.split(' -> '), count) for path, count in sorted_paths]
+            if len(path) < 2:
+                continue
+            
+            # Store the aggregated path
+            self.aggregated_paths.append(item)
+            
+            # Build flow_paths for compatibility
+            path_str = ' -> '.join(path)
+            self.flow_paths[path_str] += count
+            
+            # Build screen transitions
+            for i in range(len(path) - 1):
+                from_screen = path[i]
+                to_screen = path[i + 1]
+                self.screen_transitions[from_screen][to_screen] += count
+            
+            # Extract metadata for segmentation
+            traffic_source = item.get('traffic_source', 'direct')
+            self.traffic_sources.add(traffic_source)
+            
+            # Create synthetic session data for compatibility
+            session_data = {
+                'session_id': f"aggregated_{len(self.sessions)}",
+                'screens': path,
+                'traffic_source': traffic_source,
+                'count': count  # Store the aggregated count
+            }
+            
+            # Add all metadata fields
+            for key, value in item.items():
+                if key not in ['path', 'count']:
+                    session_data[key] = value
+                    self.segment_values[key].add(value)
+            
+            # Simulate multiple sessions based on count
+            for _ in range(count):
+                self.sessions.append(session_data.copy())
+                self.sessions_by_source[traffic_source].append(session_data.copy())
+                
+                # Store in segment buckets
+                for field, value in session_data.items():
+                    if field not in ['session_id', 'screens', 'count']:
+                        self.sessions_by_segment[field][value].append(session_data.copy())
+    
+    def find_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
+        if self.is_pre_aggregated:
+            # For pre-aggregated data, use existing flow_paths that were built during processing
+            matching_paths = {}
+            for path_str, count in self.flow_paths.items():
+                path = path_str.split(' -> ')
+                if (len(path) <= max_length and 
+                    path[0] == start_screen and 
+                    path[-1] == end_screen):
+                    matching_paths[path_str] = count
+            
+            sorted_paths = sorted(matching_paths.items(), key=lambda x: x[1], reverse=True)
+            return [(path.split(' -> '), count) for path, count in sorted_paths]
+        else:
+            # Original implementation for raw event data
+            paths = []
+            
+            for session in self.sessions:
+                screens = session['screens']
+                
+                for i, screen in enumerate(screens):
+                    if screen == start_screen:
+                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
+                            if screens[j] == end_screen:
+                                path = screens[i:j+1]
+                                path_str = ' -> '.join(path)
+                                self.flow_paths[path_str] += 1
+                                break
+            
+            sorted_paths = sorted(self.flow_paths.items(), key=lambda x: x[1], reverse=True)
+            
+            return [(path.split(' -> '), count) for path, count in sorted_paths]
     
     def find_all_paths_between(self, start_screen: str, end_screen: str, 
                                max_depth: int = 5) -> List[Tuple[List[str], int]]:

@@ -39,17 +39,19 @@ def main():
                       help='List all available fields for segmentation')
     parser.add_argument('--interactive', action='store_true',
                       help='Start interactive mode for multiple queries')
+    parser.add_argument('--pre-aggregated', action='store_true',
+                      help='Treat data as pre-aggregated paths with counts instead of raw events')
     
     args = parser.parse_args()
     
     print(f"Loading data from {args.data}...")
-    analyzer = FlowPathAnalyzer()
+    analyzer = FlowPathAnalyzer(is_pre_aggregated=args.pre_aggregated)
     analyzer.load_data(args.data)
     
     # Handle interactive mode
     if args.interactive:
         from interactive import InteractiveFlowAnalyzer
-        interactive_analyzer = InteractiveFlowAnalyzer(args.data)
+        interactive_analyzer = InteractiveFlowAnalyzer(args.data, is_pre_aggregated=args.pre_aggregated)
         interactive_analyzer.run()
         return
     

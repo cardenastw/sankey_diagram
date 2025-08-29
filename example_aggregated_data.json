@@ -1,0 +1,75 @@
+[
+    {
+        "path": ["Home", "Products", "Cart", "Checkout", "Payment", "OrderConfirmation"],
+        "count": 45,
+        "traffic_source": "google_organic",
+        "user_type": "new",
+        "device": "mobile"
+    },
+    {
+        "path": ["Home", "Search", "Products", "Cart", "Checkout"],
+        "count": 32,
+        "traffic_source": "direct",
+        "user_type": "returning",
+        "device": "desktop"
+    },
+    {
+        "path": ["Landing", "Home", "Products", "ProductDetail", "Cart", "Checkout", "Payment", "OrderConfirmation"],
+        "count": 28,
+        "traffic_source": "facebook_campaign",
+        "user_type": "new",
+        "device": "mobile",
+        "campaign_id": "summer_sale"
+    },
+    {
+        "path": ["Home", "Categories", "Products", "ProductDetail", "Cart"],
+        "count": 23,
+        "traffic_source": "google_organic",
+        "user_type": "returning",
+        "device": "desktop"
+    },
+    {
+        "path": ["Search", "Products", "ProductDetail", "Reviews", "ProductDetail", "Cart", "Checkout"],
+        "count": 19,
+        "traffic_source": "social_organic",
+        "user_type": "new",
+        "device": "tablet"
+    },
+    {
+        "path": ["Blog", "Home", "Products", "ProductDetail", "Cart", "Checkout", "Payment", "OrderConfirmation"],
+        "count": 17,
+        "traffic_source": "direct",
+        "user_type": "new",
+        "device": "desktop"
+    },
+    {
+        "path": ["Deals", "ProductDetail", "Cart", "Checkout"],
+        "count": 15,
+        "traffic_source": "google_ads",
+        "user_type": "returning",
+        "device": "mobile",
+        "campaign_id": "brand_awareness"
+    },
+    {
+        "path": ["Home", "Account", "Orders", "OrderDetail", "Products"],
+        "count": 12,
+        "traffic_source": "email_newsletter",
+        "user_type": "returning",
+        "device": "desktop"
+    },
+    {
+        "path": ["Support", "FAQ", "Home", "Products", "ProductDetail"],
+        "count": 8,
+        "traffic_source": "direct",
+        "user_type": "returning",
+        "device": "tablet"
+    },
+    {
+        "path": ["Landing", "SpecialOffer", "ProductDetail", "Home", "Deals", "ProductDetail", "Cart"],
+        "count": 6,
+        "traffic_source": "affiliate",
+        "user_type": "new",
+        "device": "desktop",
+        "affiliate_id": "partner_123"
+    }
+]

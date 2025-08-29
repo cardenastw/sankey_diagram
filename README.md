@@ -24,9 +24,20 @@ Analyze paths from Home to OrderConfirmation:
 python main.py --start Home --end OrderConfirmation --data example_data.json
 ```
 
+### With Pre-aggregated Data
+```bash
+python main.py --start Home --end Checkout --data aggregated_paths.json --pre-aggregated
+```
+
 ### With All Visualizations
 ```bash
 python main.py --start Home --end Checkout --viz-type all --show-stats
+```
+
+### Interactive Mode
+```bash
+python interactive.py --data example_data.json
+python interactive.py --data aggregated_paths.json --pre-aggregated
 ```
 
 ### Command Line Options
@@ -38,6 +49,8 @@ python main.py --start Home --end Checkout --viz-type all --show-stats
 - `--viz-type`: Type of visualization (flow, sankey, heatmap, network, all)
 - `--output-dir`: Directory to save visualizations (default: output)
 - `--show-stats`: Display flow statistics
+- `--pre-aggregated`: Treat data as pre-aggregated paths with counts
+- `--interactive`: Start interactive mode for multiple queries
 
 ### Demo Mode
 
@@ -48,7 +61,9 @@ python main.py
 
 ## Data Format
 
-### JSON Format
+### Raw Event Data (Default)
+
+#### JSON Format
 ```json
 [
     {
@@ -59,11 +74,33 @@ python main.py
 ]
 ```
 
-### CSV Format
+#### CSV Format
 ```csv
 session_id,screen,timestamp
 user1_session1,Home,2024-01-15T10:00:00
 user1_session1,Products,2024-01-15T10:00:30
+```
+
+### Pre-aggregated Data
+
+For large datasets, you can use pre-aggregated path data with the `--pre-aggregated` flag:
+
+```json
+[
+    {
+        "path": ["Home", "Products", "Cart"],
+        "count": 150,
+        "traffic_source": "google_organic",
+        "user_type": "new",
+        "device": "mobile"
+    },
+    {
+        "path": ["Home", "Search", "Products", "Cart"],
+        "count": 89,
+        "traffic_source": "direct",
+        "user_type": "returning"
+    }
+]
 ```
 
 ## Features
