@@ -3,6 +3,7 @@ import numpy as np
 from collections import defaultdict, Counter
 from typing import List, Dict, Tuple, Optional, Set
 import json
+import requests
 
 
 class FlowPathAnalyzer:
@@ -17,18 +18,23 @@ class FlowPathAnalyzer:
         
     def load_data(self, data_source):
         if isinstance(data_source, str):
-            if data_source.endswith('.json'):
+            if data_source.startswith('http://') or data_source.startswith('https://'):
+                # Load from server
+                response = requests.get(data_source)
+                response.raise_for_status()
+                data = response.json()
+            elif data_source.endswith('.json'):
                 with open(data_source, 'r') as f:
                     data = json.load(f)
             elif data_source.endswith('.csv'):
                 df = pd.read_csv(data_source)
                 data = df.to_dict('records')
             else:
-                raise ValueError("Unsupported file format. Use JSON or CSV.")
+                raise ValueError("Unsupported file format. Use JSON or CSV, or provide HTTP(S) URL.")
         elif isinstance(data_source, list):
             data = data_source
         else:
-            raise ValueError("Data source must be a file path or list of dictionaries")
+            raise ValueError("Data source must be a file path, URL, or list of dictionaries")
         
         self._process_sessions(data)
         
@@ -543,6 +549,37 @@ class FlowPathAnalyzer:
                                    for transitions in self.screen_transitions.values())
         }
     
+    def find_most_common_paths_to_screen(self, end_screen: str, max_length: int = 10, 
+                                        top_n: int = 10) -> List[Tuple[List[str], int]]:
+        """Find the most common paths that lead to a specific end screen.
+        
+        Args:
+            end_screen: The target screen to find paths to
+            max_length: Maximum path length to consider
+            top_n: Number of top paths to return
+            
+        Returns:
+            List of (path, count) tuples sorted by frequency
+        """
+        path_counts = defaultdict(int)
+        
+        for session in self.sessions:
+            screens = session['screens']
+            
+            # Find all occurrences of end_screen in this session
+            for j, screen in enumerate(screens):
+                if screen == end_screen:
+                    # Look backwards to find possible starting points
+                    for i in range(max(0, j - max_length + 1), j):
+                        path = screens[i:j+1]
+                        if len(path) >= 2:  # At least start->end
+                            path_str = ' -> '.join(path)
+                            path_counts[path_str] += 1
+        
+        # Sort by frequency and return top results
+        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+
     def export_transition_matrix(self) -> pd.DataFrame:
         screens = sorted(set(list(self.screen_transitions.keys()) + 
                            [s for transitions in self.screen_transitions.values() 

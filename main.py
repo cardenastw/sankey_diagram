@@ -14,11 +14,13 @@ def main():
                       help='Starting screen name')
     parser.add_argument('--end', type=str, 
                       help='Ending screen name')
+    parser.add_argument('--most-common-to', type=str,
+                      help='Find most common paths leading to this screen (no start screen required)')
     parser.add_argument('--top-paths', type=int, default=5,
                       help='Number of top paths to display (default: 5)')
     parser.add_argument('--viz-type', type=str, default='all',
-                      choices=['flow', 'sankey', 'heatmap', 'network', 'all'],
-                      help='Type of visualization to create')
+                      choices=['flow', 'sankey', 'heatmap', 'network', 'all', 'none'],
+                      help='Type of visualization to create (use "none" to skip visualization)')
     parser.add_argument('--output-dir', type=str, default='output',
                       help='Directory to save visualizations')
     parser.add_argument('--show-stats', action='store_true',
@@ -35,12 +37,21 @@ def main():
                       help='Multiple field names to split by (creates combinations)')
     parser.add_argument('--list-fields', action='store_true',
                       help='List all available fields for segmentation')
+    parser.add_argument('--interactive', action='store_true',
+                      help='Start interactive mode for multiple queries')
     
     args = parser.parse_args()
     
     print(f"Loading data from {args.data}...")
     analyzer = FlowPathAnalyzer()
     analyzer.load_data(args.data)
+    
+    # Handle interactive mode
+    if args.interactive:
+        from interactive import InteractiveFlowAnalyzer
+        interactive_analyzer = InteractiveFlowAnalyzer(args.data)
+        interactive_analyzer.run()
+        return
     
     # Handle listing available fields
     if args.list_fields:
@@ -58,9 +69,26 @@ def main():
             print("\nNo segmentation fields found in the data.")
         return
     
+    # Handle most common paths to a screen
+    if args.most_common_to:
+        print(f"\nFinding most common paths leading to '{args.most_common_to}'...")
+        most_common_paths = analyzer.find_most_common_paths_to_screen(
+            args.most_common_to, 
+            top_n=args.top_paths
+        )
+        
+        if not most_common_paths:
+            print(f"No paths found leading to '{args.most_common_to}'")
+            return
+        
+        print(f"\nTop {len(most_common_paths)} paths leading to '{args.most_common_to}':")
+        for i, (path, count) in enumerate(most_common_paths, 1):
+            print(f"{i}. {' -> '.join(path)} (Count: {count})")
+        return
+    
     # Check if start and end are provided for path analysis
     if not args.start or not args.end:
-        parser.error("--start and --end are required for path analysis")
+        parser.error("--start and --end are required for path analysis (or use --most-common-to for end-screen-only analysis)")
     
     if args.show_stats:
         print("\n=== Flow Statistics ===")
@@ -278,6 +306,10 @@ def main():
         for i, (path, count) in enumerate(paths[:args.top_paths], 1):
             print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
+    # Skip visualization if requested
+    if args.viz_type == 'none':
+        return
+        
     visualizer = FlowPathVisualizer(analyzer)
     
     import os
