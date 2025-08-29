@@ -14,29 +14,60 @@ class InteractiveFlowAnalyzer:
     def show_help(self):
         print("""
 Available commands:
-  most-common-to <screen>           - Find most common paths to a screen
-  paths <start> <end>               - Find paths from start to end screen
-  stats                             - Show flow statistics
-  fields                            - List available segmentation fields
-  help                              - Show this help message
-  exit                              - Exit the interactive session
+  most-common-to <screen> [--where field=value]  - Find most common paths to a screen with optional filtering
+  paths <start> <end>                           - Find paths from start to end screen
+  stats                                         - Show flow statistics
+  fields                                        - List available segmentation fields
+  help                                          - Show this help message
+  exit                                          - Exit the interactive session
 
 Examples:
   most-common-to Cart
+  most-common-to Checkout --where purchased=true
+  most-common-to Products --where device=mobile
   paths Home Checkout
   stats
         """)
     
-    def handle_most_common_to(self, screen: str, top_n: int = 5):
-        paths = self.analyzer.find_most_common_paths_to_screen(screen, top_n=top_n)
+    def handle_most_common_to(self, screen: str, top_n: int = 5, field_filter: dict = None):
+        if field_filter:
+            paths = self.analyzer.find_most_common_paths_to_screen_with_filter(
+                screen, field_filter=field_filter, top_n=top_n
+            )
+            filter_desc = ", ".join([f"{k}={v}" for k, v in field_filter.items()])
+            print(f"\nTop {len(paths)} paths leading to '{screen}' where {filter_desc}:")
+        else:
+            paths = self.analyzer.find_most_common_paths_to_screen(screen, top_n=top_n)
+            print(f"\nTop {len(paths)} paths leading to '{screen}':")
         
         if not paths:
-            print(f"No paths found leading to '{screen}'")
+            filter_msg = f" with filter {field_filter}" if field_filter else ""
+            print(f"No paths found leading to '{screen}'{filter_msg}")
             return
         
-        print(f"\nTop {len(paths)} paths leading to '{screen}':")
         for i, (path, count) in enumerate(paths, 1):
             print(f"{i}. {' -> '.join(path)} (Count: {count})")
+    
+    def _parse_where_clause(self, parts: list) -> dict:
+        """Parse --where field=value clauses from command parts."""
+        field_filter = {}
+        i = 0
+        while i < len(parts):
+            if parts[i] == '--where' and i + 1 < len(parts):
+                # Parse field=value
+                filter_expr = parts[i + 1]
+                if '=' in filter_expr:
+                    field, value = filter_expr.split('=', 1)
+                    # Convert string boolean values
+                    if value.lower() == 'true':
+                        value = True
+                    elif value.lower() == 'false':
+                        value = False
+                    field_filter[field] = value
+                i += 2
+            else:
+                i += 1
+        return field_filter
     
     def handle_paths(self, start: str, end: str, top_n: int = 5):
         paths = self.analyzer.find_paths(start, end)
@@ -95,11 +126,18 @@ Examples:
                     self.handle_fields()
                 elif command == 'most-common-to':
                     if len(parts) < 2:
-                        print("Usage: most-common-to <screen>")
+                        print("Usage: most-common-to <screen> [--where field=value]")
                         continue
                     screen = parts[1]
-                    top_n = int(parts[2]) if len(parts) > 2 else 5
-                    self.handle_most_common_to(screen, top_n)
+                    
+                    # Parse --where clauses
+                    field_filter = self._parse_where_clause(parts)
+                    
+                    # Extract top_n if provided (but not part of --where)
+                    remaining_parts = [p for p in parts[2:] if p != '--where' and '=' not in p]
+                    top_n = int(remaining_parts[0]) if remaining_parts and remaining_parts[0].isdigit() else 5
+                    
+                    self.handle_most_common_to(screen, top_n, field_filter)
                 elif command == 'paths':
                     if len(parts) < 3:
                         print("Usage: paths <start> <end>")

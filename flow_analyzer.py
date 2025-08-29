@@ -17,6 +17,7 @@ class FlowPathAnalyzer:
         self.segment_values = defaultdict(set)
         self.is_pre_aggregated = is_pre_aggregated
         self.aggregated_paths = []  # Store pre-aggregated path data
+        self.event_metadata = defaultdict(lambda: defaultdict(dict))  # session_id -> event_index -> metadata
         
     def load_data(self, data_source):
         if isinstance(data_source, str):
@@ -73,10 +74,21 @@ class FlowPathAnalyzer:
                         self.segment_values[key].add(value)
             
             if screen:
-                sessions_dict[session_id].append({
+                event_data = {
                     'screen': screen,
                     'timestamp': timestamp
-                })
+                }
+                # Store event-level metadata
+                event_metadata = {}
+                for key, value in event.items():
+                    if key not in ['screen', 'screen_view', 'page', 'timestamp', 'session_id', 'user_id']:
+                        event_metadata[key] = value
+                        self.segment_values[key].add(value)
+                
+                sessions_dict[session_id].append(event_data)
+                # Store event metadata indexed by session and position
+                event_index = len(sessions_dict[session_id]) - 1
+                self.event_metadata[session_id][event_index] = event_metadata
         
         for session_id, screens in sessions_dict.items():
             if len(screens) > 1:
@@ -650,6 +662,101 @@ class FlowPathAnalyzer:
             # Find all occurrences of end_screen in this session
             for j, screen in enumerate(screens):
                 if screen == end_screen:
+                    # Look backwards to find possible starting points
+                    for i in range(max(0, j - max_length + 1), j):
+                        path = screens[i:j+1]
+                        if len(path) >= 2:  # At least start->end
+                            path_str = ' -> '.join(path)
+                            path_counts[path_str] += 1
+        
+        # Sort by frequency and return top results
+        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
+    def find_most_common_paths_to_screen_with_filter(self, end_screen: str, 
+                                                    field_filter: Dict[str, str] = None,
+                                                    max_length: int = 10, 
+                                                    top_n: int = 10) -> List[Tuple[List[str], int]]:
+        """Find the most common paths that lead to a specific end screen with field filtering.
+        
+        Args:
+            end_screen: The target screen to find paths to
+            field_filter: Dictionary of field->value filters to apply to target screen events
+            max_length: Maximum path length to consider
+            top_n: Number of top paths to return
+            
+        Returns:
+            List of (path, count) tuples sorted by frequency
+        """
+        path_counts = defaultdict(int)
+        
+        # For field filtering, we need to access the original event data
+        if field_filter and not self.is_pre_aggregated:
+            # Need to rebuild the data structure to include event-level metadata
+            # This is more complex for raw event data, so let's implement it differently
+            return self._find_paths_with_event_filter(end_screen, field_filter, max_length, top_n)
+        
+        for session in self.sessions:
+            screens = session['screens']
+            
+            # Find all occurrences of end_screen in this session
+            for j, screen in enumerate(screens):
+                if screen == end_screen:
+                    # Check if this screen event matches the filter criteria
+                    if field_filter:
+                        # For pre-aggregated data, check if session metadata matches filter
+                        filter_match = True
+                        for field, expected_value in field_filter.items():
+                            session_value = session.get(field)
+                            if session_value is None or str(session_value).lower() != str(expected_value).lower():
+                                filter_match = False
+                                break
+                        if not filter_match:
+                            continue
+                    
+                    # Look backwards to find possible starting points
+                    for i in range(max(0, j - max_length + 1), j):
+                        path = screens[i:j+1]
+                        if len(path) >= 2:  # At least start->end
+                            path_str = ' -> '.join(path)
+                            # Apply the count multiplier if available (for pre-aggregated data)
+                            count_multiplier = session.get('count', 1)
+                            path_counts[path_str] += count_multiplier
+        
+        # Sort by frequency and return top results
+        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
+    def _find_paths_with_event_filter(self, end_screen: str, field_filter: Dict[str, str], 
+                                     max_length: int, top_n: int) -> List[Tuple[List[str], int]]:
+        """Helper method to find paths with event-level filtering for raw data."""
+        path_counts = defaultdict(int)
+        
+        for session in self.sessions:
+            screens = session['screens']
+            session_id = session['session_id']
+            
+            # Find all occurrences of end_screen in this session
+            for j, screen in enumerate(screens):
+                if screen == end_screen:
+                    # Check event-level metadata for this specific screen occurrence
+                    event_meta = self.event_metadata.get(session_id, {}).get(j, {})
+                    
+                    # Apply filter to event-level metadata
+                    filter_match = True
+                    for field, expected_value in field_filter.items():
+                        event_value = event_meta.get(field)
+                        if event_value is None:
+                            # Fall back to session-level metadata if event-level not available
+                            event_value = session.get(field)
+                        
+                        if event_value is None or str(event_value).lower() != str(expected_value).lower():
+                            filter_match = False
+                            break
+                    
+                    if not filter_match:
+                        continue
+                    
                     # Look backwards to find possible starting points
                     for i in range(max(0, j - max_length + 1), j):
                         path = screens[i:j+1]

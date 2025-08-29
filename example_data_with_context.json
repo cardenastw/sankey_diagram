@@ -5,7 +5,7 @@
     {"session_id": "user1_session1", "screen": "Products", "timestamp": "2024-01-15T10:00:30"},
     {"session_id": "user1_session1", "screen": "ProductDetail", "timestamp": "2024-01-15T10:01:00"},
     {"session_id": "user1_session1", "screen": "Cart", "timestamp": "2024-01-15T10:02:00"},
-    {"session_id": "user1_session1", "screen": "Checkout", "timestamp": "2024-01-15T10:03:00"},
+    {"session_id": "user1_session1", "screen": "Checkout", "timestamp": "2024-01-15T10:03:00", "purchased": true},
     {"session_id": "user1_session1", "screen": "Payment", "timestamp": "2024-01-15T10:04:00"},
     {"session_id": "user1_session1", "screen": "OrderConfirmation", "timestamp": "2024-01-15T10:05:00"},
     
@@ -26,7 +26,7 @@
     {"session_id": "user3_session1", "screen": "Products", "timestamp": "2024-01-15T12:00:30"},
     {"session_id": "user3_session1", "screen": "ProductDetail", "timestamp": "2024-01-15T12:01:00"},
     {"session_id": "user3_session1", "screen": "Cart", "timestamp": "2024-01-15T12:01:30"},
-    {"session_id": "user3_session1", "screen": "Checkout", "timestamp": "2024-01-15T12:02:00"},
+    {"session_id": "user3_session1", "screen": "Checkout", "timestamp": "2024-01-15T12:02:00", "purchased": true},
     {"session_id": "user3_session1", "screen": "Payment", "timestamp": "2024-01-15T12:03:00"},
     {"session_id": "user3_session1", "screen": "OrderConfirmation", "timestamp": "2024-01-15T12:04:00"},
     
@@ -39,7 +39,7 @@
     {"session_id": "user4_session1", "screen": "Products", "timestamp": "2024-01-15T13:01:00"},
     {"session_id": "user4_session1", "screen": "ProductDetail", "timestamp": "2024-01-15T13:01:30"},
     {"session_id": "user4_session1", "screen": "Cart", "timestamp": "2024-01-15T13:02:00"},
-    {"session_id": "user4_session1", "screen": "Checkout", "timestamp": "2024-01-15T13:02:30"},
+    {"session_id": "user4_session1", "screen": "Checkout", "timestamp": "2024-01-15T13:02:30", "purchased": false},
     
     {"session_id": "user5_session1", "screen": "Support", "timestamp": "2024-01-15T13:58:00", "traffic_source": "email_newsletter", "user_type": "returning", "device": "tablet"},
     {"session_id": "user5_session1", "screen": "FAQ", "timestamp": "2024-01-15T13:59:00"},
@@ -79,7 +79,7 @@
     {"session_id": "user8_session1", "screen": "Products", "timestamp": "2024-01-15T17:02:00"},
     {"session_id": "user8_session1", "screen": "ProductDetail", "timestamp": "2024-01-15T17:02:30"},
     {"session_id": "user8_session1", "screen": "Cart", "timestamp": "2024-01-15T17:03:00"},
-    {"session_id": "user8_session1", "screen": "Checkout", "timestamp": "2024-01-15T17:03:30"},
+    {"session_id": "user8_session1", "screen": "Checkout", "timestamp": "2024-01-15T17:03:30", "purchased": true},
     {"session_id": "user8_session1", "screen": "Payment", "timestamp": "2024-01-15T17:04:00"},
     {"session_id": "user8_session1", "screen": "OrderConfirmation", "timestamp": "2024-01-15T17:05:00"}
 ]
