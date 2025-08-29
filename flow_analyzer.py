@@ -494,59 +494,9 @@ class FlowPathAnalyzer:
     
     def get_most_common_paths(self, top_n: int = 10, exploration_mode: str = 'fast') -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
-            # For pre-aggregated data, return the chunk paths and try to find longer paths
-            # First, get all original chunk paths
-            chunk_paths = {}
-            for path_str, count in self.flow_paths.items():
-                chunk_paths[path_str] = count
-            
-            # Also try to find longer chained paths by exploring common transitions
-            from collections import defaultdict, deque
-            
-            chunks_starting_with = defaultdict(list)
-            chunks_ending_with = defaultdict(list)
-            
-            # Organize chunks by their start and end screens
-            for chunk in self.path_chunks:
-                path = chunk['path']
-                if len(path) >= 2:
-                    start = path[0]
-                    end = path[-1]
-                    chunks_starting_with[start].append(chunk)
-                    chunks_ending_with[end].append(chunk)
-            
-            # Configure exploration based on mode
-            if exploration_mode == 'deep':
-                max_chain_length = 8
-                max_starting_chunks = 50
-                max_depth = 4
-                max_branches = 5
-            elif exploration_mode == 'medium':
-                max_chain_length = 6  
-                max_starting_chunks = 30
-                max_depth = 3
-                max_branches = 3
-            else:  # 'fast' or default
-                max_chain_length = 8
-                max_starting_chunks = 15
-                max_depth = 4
-                max_branches = 2
-            
-            explored_chains = set()
-            
-            # Sort chunks by count for better early results
-            sorted_chunks = sorted(self.path_chunks, key=lambda x: x['count'], reverse=True)
-            
-            # Explore chaining from the top chunks
-            for start_chunk in sorted_chunks[:min(max_starting_chunks, len(sorted_chunks))]:
-                self._explore_chains_from_chunk(
-                    start_chunk, chunks_starting_with, chunk_paths, 
-                    explored_chains, max_chain_length, depth=0, 
-                    max_depth=max_depth, max_branches=max_branches
-                )
-            
-            # Sort and return results
-            sorted_paths = sorted(chunk_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            # For pre-aggregated data, assume session transitions are already taken care of
+            # Simply return the paths from the data, sorted by frequency
+            sorted_paths = sorted(self.flow_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
             return [(path.split(' -> '), count) for path, count in sorted_paths]
         else:
             # Original implementation for raw session data
@@ -1051,8 +1001,8 @@ class FlowPathAnalyzer:
             List of (path, count) tuples sorted by frequency, prioritizing longer complete paths
         """
         if self.is_pre_aggregated:
-            # Handle pre-aggregated data by chaining chunks backwards from the end screen
-            return self._find_chained_paths_to_screen(end_screen, max_length, top_n)
+            # For pre-aggregated data, find both direct paths and chained paths to the target screen
+            return self._find_all_paths_to_screen(end_screen, max_length, top_n, ascending=False)
         else:
             # Handle raw session data
             path_counts = defaultdict(int)
@@ -1195,6 +1145,80 @@ class FlowPathAnalyzer:
         sorted_paths = sorted(found_paths.items(), key=sort_key, reverse=True)
         return [(path.split(' -> '), count) for path, count in sorted_paths]
     
+    def _find_all_paths_to_screen(self, end_screen: str, max_length: int = 10, top_n: int = 10, ascending: bool = False) -> List[Tuple[List[str], int]]:
+        """Find all paths (direct and chained) that end with the target screen for pre-aggregated data."""
+        from collections import defaultdict, deque
+        
+        # Start with direct paths from flow_paths
+        found_paths = {}
+        for path_str, count in self.flow_paths.items():
+            path = path_str.split(' -> ')
+            if len(path) <= max_length and path[-1] == end_screen:
+                found_paths[path_str] = count
+        
+        # Build simple chaining - find paths that can connect to form longer chains ending with target
+        chunks_ending_with = defaultdict(list)
+        chunks_starting_with = defaultdict(list)
+        
+        # Organize chunks by their start and end screens
+        for chunk in self.path_chunks:
+            path = chunk['path']
+            if len(path) >= 2:
+                start = path[0]
+                end = path[-1]
+                chunks_starting_with[start].append(chunk)
+                chunks_ending_with[end].append(chunk)
+        
+        # Use iterative approach to build longer chains (simpler than recursive BFS)
+        max_iterations = min(max_length, 4)  # Limit iterations to prevent excessive computation
+        
+        for iteration in range(max_iterations):
+            new_paths = {}
+            
+            # For each existing path, try to extend it backwards
+            for path_str, count in found_paths.items():
+                path = path_str.split(' -> ')
+                if len(path) >= max_length:
+                    continue
+                    
+                first_screen = path[0]
+                
+                # Find chunks that end where this path starts
+                for chunk in chunks_ending_with.get(first_screen, []):
+                    chunk_path = chunk['path']
+                    if len(chunk_path) >= 2:
+                        # Create extended path (chunk + path, avoiding duplication of connecting screen)
+                        extended_path = chunk_path + path[1:]  # Skip first element of path to avoid duplication
+                        if len(extended_path) <= max_length:
+                            extended_path_str = ' -> '.join(extended_path)
+                            # Use minimum count between the chunk and existing path
+                            extended_count = min(chunk['count'], count)
+                            
+                            if extended_path_str not in found_paths:
+                                new_paths[extended_path_str] = extended_count
+                            else:
+                                # If path already exists, use the higher count
+                                new_paths[extended_path_str] = max(found_paths.get(extended_path_str, 0), extended_count)
+            
+            # Add new paths to found_paths
+            found_paths.update(new_paths)
+            
+            # If no new paths were found, stop iterating
+            if not new_paths:
+                break
+        
+        # Sort by frequency and path length
+        def sort_key(item):
+            path_str, count = item
+            path_length = len(path_str.split(' -> '))
+            if ascending:
+                return (count, -path_length)  # Ascending by count, prefer longer paths for ties
+            else:
+                return (count, path_length)   # Descending by count, prefer longer paths for ties
+        
+        sorted_paths = sorted(found_paths.items(), key=sort_key, reverse=not ascending)[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
     def _find_chained_paths_to_screen_least_common(self, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
         """Chain together pre-aggregated chunks to find LEAST common paths leading to a specific screen."""
         from collections import defaultdict, deque
@@ -1293,8 +1317,8 @@ class FlowPathAnalyzer:
             List of (path, count) tuples sorted by frequency (ascending)
         """
         if self.is_pre_aggregated:
-            # Handle pre-aggregated data by chaining chunks backwards from the end screen
-            return self._find_chained_paths_to_screen_least_common(end_screen, max_length, top_n)
+            # For pre-aggregated data, find both direct paths and chained paths to the target screen
+            return self._find_all_paths_to_screen(end_screen, max_length, top_n, ascending=True)
         else:
             # Handle raw session data
             path_counts = defaultdict(int)
