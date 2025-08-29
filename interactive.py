@@ -39,10 +39,10 @@ class InteractiveFlowAnalyzer:
     def show_help(self):
         print("""
 Available commands:
-  top-paths [N] [--where field=value]          - Show N most common paths overall (default: 10)
+  top-paths [N] [--fast|--medium|--deep]       - Show N most common paths overall (default: 10, fast mode)
   most-common-to <screen> [--where field=value]  - Find most common paths to a screen with optional filtering
   least-common-to <screen> [N] [--where field=value] - Find N least common paths to a screen (default: 5)
-  paths <start> <end> [--where field=value]    - Find paths from start to end screen
+  paths <start> <end> [N] [--context [steps]] [--where field=value] - Find paths from start to end screen with optional context
   
   Note: Use quotes for screen names with spaces (e.g., "DNA Others")
   stats                                         - Show flow statistics
@@ -61,8 +61,9 @@ Available commands:
 Examples:
   top-paths
   top-paths 15
-  top-paths --where device=mobile
-  top-paths 10 --where traffic_source=organic
+  top-paths --fast
+  top-paths 20 --deep
+  top-paths 10 --medium
   most-common-to Cart
   most-common-to "DNA Others"
   most-common-to Checkout --where purchased=true
@@ -71,7 +72,9 @@ Examples:
   least-common-to "DNA Others" 3
   least-common-to Cart --where device=mobile
   paths Home Checkout
-  paths Home Checkout --where traffic_source=organic
+  paths Home Checkout --context
+  paths Home Checkout --context 5
+  paths Home Checkout 10 --context --where traffic_source=organic
   stats
   simulate --change Landing->Products 0.4
   simulate --increase Cart->Checkout 25 --goal OrderConfirmation
@@ -156,24 +159,60 @@ Examples:
             i += 1
         return goal_screens
     
-    def handle_paths(self, start: str, end: str, top_n: int = 5, field_filter: dict = None):
-        if field_filter:
-            paths = self.analyzer.find_paths_with_filter(
-                start, end, field_filter=field_filter, max_paths=top_n
+    def handle_paths(self, start: str, end: str, top_n: int = 5, field_filter: dict = None, 
+                    include_context: bool = False, context_steps: int = 3):
+        if include_context:
+            # Use context-aware path finding
+            result = self.analyzer.find_paths_with_context(
+                start, end, max_length=10, context_steps=context_steps
             )
-            filter_desc = ", ".join([f"{k}={v}" for k, v in field_filter.items()])
-            print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}' where {filter_desc}:")
-        else:
-            paths = self.analyzer.find_paths(start, end)
-            print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}':")
-        
-        if not paths:
+            paths = result['paths'][:top_n]
+            context_paths = result['context_paths']
+            full_journeys = result['full_journeys'][:top_n]
+            
             filter_msg = f" with filter {field_filter}" if field_filter else ""
-            print(f"No paths found from '{start}' to '{end}'{filter_msg}")
-            return
-        
-        for i, (path, count) in enumerate(paths[:top_n], 1):
-            print(f"{i}. {' -> '.join(path)} (Count: {count})")
+            print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}'{filter_msg} (with {context_steps}-step context):")
+            
+            if not paths:
+                print(f"No paths found from '{start}' to '{end}'{filter_msg}")
+                return
+            
+            # Show paths with context
+            for i, (path, count) in enumerate(paths, 1):
+                print(f"\n{i}. {' -> '.join(path)} (Count: {count})")
+                
+                # Show context if available
+                path_str = ' -> '.join(path)
+                if path_str in context_paths:
+                    context_info = context_paths[path_str]
+                    print(f"   Context (steps before '{start}'):")
+                    for context, ctx_count in sorted(context_info.items(), key=lambda x: x[1], reverse=True)[:3]:
+                        print(f"   • {context} -> {start} ({ctx_count} times)")
+            
+            # Show some full journeys
+            if full_journeys:
+                print(f"\nComplete journeys (context + path):")
+                for i, (journey, count) in enumerate(full_journeys[:5], 1):
+                    print(f"{i}. {' -> '.join(journey)} (Count: {count})")
+        else:
+            # Original path finding without context
+            if field_filter:
+                paths = self.analyzer.find_paths_with_filter(
+                    start, end, field_filter=field_filter, max_paths=top_n
+                )
+                filter_desc = ", ".join([f"{k}={v}" for k, v in field_filter.items()])
+                print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}' where {filter_desc}:")
+            else:
+                paths = self.analyzer.find_paths(start, end)
+                print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}':")
+            
+            if not paths:
+                filter_msg = f" with filter {field_filter}" if field_filter else ""
+                print(f"No paths found from '{start}' to '{end}'{filter_msg}")
+                return
+            
+            for i, (path, count) in enumerate(paths[:top_n], 1):
+                print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
     def handle_stats(self):
         stats = self.analyzer.get_statistics()
@@ -197,15 +236,16 @@ Examples:
         else:
             print("\nNo segmentation fields found in the data.")
     
-    def handle_top_paths(self, top_n: int = 10):
+    def handle_top_paths(self, top_n: int = 10, exploration_mode: str = 'fast'):
         """Show the most common paths overall."""
-        paths = self.analyzer.get_most_common_paths(top_n=top_n)
+        paths = self.analyzer.get_most_common_paths(top_n=top_n, exploration_mode=exploration_mode)
         
         if not paths:
             print("No paths found in the data.")
             return
         
-        print(f"\nTop {len(paths)} most common paths:")
+        mode_desc = {'fast': 'Fast', 'medium': 'Medium', 'deep': 'Deep'}
+        print(f"\nTop {len(paths)} most common paths ({mode_desc.get(exploration_mode, 'Fast')} exploration):")
         for i, (path, count) in enumerate(paths, 1):
             print(f"{i:2d}. {' -> '.join(path)} (Count: {count})")
     
@@ -489,8 +529,19 @@ Examples:
                 elif command == 'simulate':
                     self.handle_simulate(parts)
                 elif command == 'top-paths':
-                    top_n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
-                    self.handle_top_paths(top_n)
+                    top_n = 10
+                    exploration_mode = 'fast'
+                    
+                    # Parse arguments
+                    i = 1
+                    while i < len(parts):
+                        if parts[i].isdigit():
+                            top_n = int(parts[i])
+                        elif parts[i] in ['--fast', '--medium', '--deep']:
+                            exploration_mode = parts[i][2:]  # Remove '--' prefix
+                        i += 1
+                    
+                    self.handle_top_paths(top_n, exploration_mode)
                 elif command == 'viz':
                     self.handle_viz(parts)
                 elif command == 'most-common-to':
@@ -523,18 +574,47 @@ Examples:
                     self.handle_least_common_to(screen, top_n, field_filter)
                 elif command == 'paths':
                     if len(parts) < 3:
-                        print("Usage: paths <start> <end> [--where field=value]")
+                        print("Usage: paths <start> <end> [N] [--context [steps]] [--where field=value]")
                         continue
                     start, end = parts[1], parts[2]
                     
                     # Parse --where clauses
                     field_filter = self._parse_where_clause(parts)
                     
-                    # Extract top_n if provided (but not part of --where)
-                    remaining_parts = [p for p in parts[3:] if p != '--where' and '=' not in p]
+                    # Parse context options
+                    include_context = '--context' in parts
+                    context_steps = 3  # default
+                    
+                    if include_context:
+                        context_idx = parts.index('--context')
+                        # Check if next part is a number (context steps)
+                        if (context_idx + 1 < len(parts) and 
+                            parts[context_idx + 1].isdigit() and 
+                            parts[context_idx + 1] != '--where'):
+                            context_steps = int(parts[context_idx + 1])
+                    
+                    # Extract top_n if provided (but not part of --where or --context)
+                    remaining_parts = []
+                    skip_next = False
+                    for i, part in enumerate(parts[3:], 3):
+                        if skip_next:
+                            skip_next = False
+                            continue
+                        if part == '--where':
+                            break
+                        elif part == '--context':
+                            # Skip --context and potentially its argument
+                            if (i + 1 < len(parts) and 
+                                parts[i + 1].isdigit() and 
+                                i + 1 < len(parts) and parts[i + 1] != '--where'):
+                                skip_next = True
+                            continue
+                        elif '=' not in part:
+                            remaining_parts.append(part)
+                    
                     top_n = int(remaining_parts[0]) if remaining_parts and remaining_parts[0].isdigit() else 5
                     
-                    self.handle_paths(start, end, top_n, field_filter)
+                    self.handle_paths(start, end, top_n, field_filter, include_context, context_steps)
                 else:
                     print(f"Unknown command: {command}. Type 'help' for available commands.")
                     

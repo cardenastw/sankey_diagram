@@ -475,7 +475,7 @@ class FlowPathAnalyzer:
         return [(path.split(' -> '), count) for path, count in 
                 sorted(path_counts.items(), key=lambda x: x[1], reverse=True)]
     
-    def get_most_common_paths(self, top_n: int = 10) -> List[Tuple[List[str], int]]:
+    def get_most_common_paths(self, top_n: int = 10, exploration_mode: str = 'fast') -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
             # For pre-aggregated data, return the chunk paths and try to find longer paths
             # First, get all original chunk paths
@@ -498,41 +498,35 @@ class FlowPathAnalyzer:
                     chunks_starting_with[start].append(chunk)
                     chunks_ending_with[end].append(chunk)
             
-            # Enhanced chaining - try to build longer paths from 2-screen paths
-            explored_chains = set()
-            max_chain_length = 8  # Maximum path length to explore
+            # Configure exploration based on mode
+            if exploration_mode == 'deep':
+                max_chain_length = 8
+                max_starting_chunks = 50
+                max_depth = 4
+                max_branches = 5
+            elif exploration_mode == 'medium':
+                max_chain_length = 6  
+                max_starting_chunks = 30
+                max_depth = 3
+                max_branches = 3
+            else:  # 'fast' or default
+                max_chain_length = 5
+                max_starting_chunks = 15
+                max_depth = 2
+                max_branches = 2
             
-            # Start BFS from each chunk to build longer paths
-            for start_chunk in self.path_chunks:
-                queue = deque([(start_chunk['path'], start_chunk['count'], {tuple(start_chunk['path'])})])
-                
-                while queue:
-                    current_path, current_count, visited_paths = queue.popleft()
-                    
-                    if len(current_path) > max_chain_length:
-                        continue
-                    
-                    # Record this path
-                    path_str = ' -> '.join(current_path)
-                    if path_str not in explored_chains:
-                        explored_chains.add(path_str)
-                        if path_str not in chunk_paths or chunk_paths[path_str] < current_count:
-                            chunk_paths[path_str] = current_count
-                    
-                    # Try to extend this path
-                    last_screen = current_path[-1]
-                    for next_chunk in chunks_starting_with[last_screen]:
-                        next_path = next_chunk['path']
-                        next_path_tuple = tuple(next_path)
-                        
-                        # Avoid revisiting the same chunk and prevent infinite loops
-                        if next_path_tuple not in visited_paths and len(next_path) >= 2:
-                            # Chain paths (remove overlap)
-                            extended_path = current_path + next_path[1:]
-                            extended_count = min(current_count, next_chunk['count'])
-                            new_visited = visited_paths | {next_path_tuple}
-                            
-                            queue.append((extended_path, extended_count, new_visited))
+            explored_chains = set()
+            
+            # Sort chunks by count for better early results
+            sorted_chunks = sorted(self.path_chunks, key=lambda x: x['count'], reverse=True)
+            
+            # Explore chaining from the top chunks
+            for start_chunk in sorted_chunks[:min(max_starting_chunks, len(sorted_chunks))]:
+                self._explore_chains_from_chunk(
+                    start_chunk, chunks_starting_with, chunk_paths, 
+                    explored_chains, max_chain_length, depth=0, 
+                    max_depth=max_depth, max_branches=max_branches
+                )
             
             # Sort and return results
             sorted_paths = sorted(chunk_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
@@ -553,6 +547,47 @@ class FlowPathAnalyzer:
             
             sorted_paths = sorted(all_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
             return [(list(path), count) for path, count in sorted_paths]
+    
+    def _explore_chains_from_chunk(self, start_chunk, chunks_starting_with, chunk_paths, 
+                                 explored_chains, max_length, depth, max_depth=3, max_branches=3):
+        """Configurable recursive chaining with depth and branch limits."""
+        if depth > max_depth:  # Limit recursion depth
+            return
+            
+        path = start_chunk['path']
+        count = start_chunk['count']
+        path_str = ' -> '.join(path)
+        
+        # Record this path if we haven't seen it
+        if path_str not in explored_chains:
+            explored_chains.add(path_str)
+            if path_str not in chunk_paths or chunk_paths[path_str] < count:
+                chunk_paths[path_str] = count
+        
+        if len(path) >= max_length:
+            return
+            
+        # Try to extend with the next chunk (limit branching factor)
+        last_screen = path[-1]
+        next_chunks = chunks_starting_with.get(last_screen, [])
+        for next_chunk in sorted(next_chunks, key=lambda x: x['count'], reverse=True)[:max_branches]:
+            next_path = next_chunk['path']
+            
+            if len(next_path) >= 2:  # Valid chunk
+                # Chain paths (remove overlap)
+                chained_path = path + next_path[1:]
+                chained_count = min(count, next_chunk['count'])
+                
+                # Create new chunk for recursion
+                chained_chunk = {
+                    'path': chained_path,
+                    'count': chained_count
+                }
+                
+                self._explore_chains_from_chunk(
+                    chained_chunk, chunks_starting_with, chunk_paths,
+                    explored_chains, max_length, depth + 1, max_depth, max_branches
+                )
     
     def get_preceding_steps(self, session_screens: List[str], target_screen: str, 
                            max_steps: int = 3) -> List[str]:
