@@ -494,10 +494,8 @@ class FlowPathAnalyzer:
     
     def get_most_common_paths(self, top_n: int = 10, exploration_mode: str = 'fast') -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
-            # For pre-aggregated data, assume session transitions are already taken care of
-            # Simply return the paths from the data, sorted by frequency
-            sorted_paths = sorted(self.flow_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
-            return [(path.split(' -> '), count) for path, count in sorted_paths]
+            # For pre-aggregated data, build complete chained paths using forward BFS
+            return self._find_all_complete_paths(top_n, exploration_mode)
         else:
             # Original implementation for raw session data
             from collections import defaultdict  # Fix the missing import
@@ -1229,6 +1227,100 @@ class FlowPathAnalyzer:
                 return (count, path_length)   # Descending by count, prefer longer paths for ties
         
         sorted_paths = sorted(found_paths.items(), key=sort_key, reverse=not ascending)[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
+    def _find_all_complete_paths(self, top_n: int = 10, exploration_mode: str = 'fast') -> List[Tuple[List[str], int]]:
+        """Find all complete chained paths for pre-aggregated data, prioritizing longer paths."""
+        from collections import defaultdict, deque
+        
+        # Configure exploration based on mode
+        if exploration_mode == 'deep':
+            max_chain_length = 8
+            max_depth = 5
+            min_path_length = 3  # Show paths of 3+ steps
+        elif exploration_mode == 'medium':
+            max_chain_length = 6  
+            max_depth = 4
+            min_path_length = 3  # Show paths of 3+ steps
+        else:  # 'fast' or default
+            max_chain_length = 6
+            max_depth = 4
+            min_path_length = 4  # Show paths of 4+ steps by default
+        
+        # Build forward chains from all possible starting chunks
+        chunks_starting_with = defaultdict(list)
+        
+        # Organize chunks by their start screens
+        for chunk in self.path_chunks:
+            path = chunk['path']
+            if len(path) >= 2:
+                start = path[0]
+                chunks_starting_with[start].append(chunk)
+        
+        # Use BFS to build paths forward from all starting points
+        found_paths = {}
+        queue = deque()
+        
+        # Start BFS from all chunks (each chunk is a potential starting point)
+        for chunk in self.path_chunks:
+            path = chunk['path']
+            count = chunk['count']
+            
+            if len(path) >= 2:
+                path_str = ' -> '.join(path)
+                queue.append((path, count, {tuple(path)}, 1))  # (path, count, visited_chunks, depth)
+                
+                # Only include paths that meet minimum length requirement
+                if len(path) >= min_path_length:
+                    found_paths[path_str] = count
+        
+        # BFS to extend paths
+        while queue:
+            current_path, current_count, visited_chunks, depth = queue.popleft()
+            
+            if depth >= max_depth or len(current_path) >= max_chain_length:
+                continue
+                
+            last_screen = current_path[-1]
+            
+            # Try to extend this path forward
+            for next_chunk in chunks_starting_with.get(last_screen, []):
+                next_path = next_chunk['path']
+                next_chunk_tuple = tuple(next_path)
+                
+                # Skip if we've already used this chunk
+                if next_chunk_tuple in visited_chunks:
+                    continue
+                
+                # Check for cycles: ensure no screen in next_path (except connecting one) already exists
+                current_screens = set(current_path)
+                next_screens = set(next_path[1:])  # Exclude first screen (connecting screen)
+                
+                if next_screens & current_screens:
+                    continue
+                
+                # Create extended path
+                extended_path = current_path + next_path[1:]  # Skip first element to avoid duplication
+                if len(extended_path) <= max_chain_length:
+                    extended_count = min(current_count, next_chunk['count'])
+                    new_visited = visited_chunks | {next_chunk_tuple}
+                    
+                    # Add to queue for further extension
+                    queue.append((extended_path, extended_count, new_visited, depth + 1))
+                    
+                    # Record this path if it meets minimum length requirement
+                    if len(extended_path) >= min_path_length:
+                        extended_path_str = ' -> '.join(extended_path)
+                        if extended_path_str not in found_paths or found_paths[extended_path_str] < extended_count:
+                            found_paths[extended_path_str] = extended_count
+        
+        # Sort by frequency and path length (longer paths preferred for ties)
+        def sort_key(item):
+            path_str, count = item
+            path_length = len(path_str.split(' -> '))
+            return (count, path_length)  # Higher count first, then longer paths
+        
+        sorted_paths = sorted(found_paths.items(), key=sort_key, reverse=True)[:top_n]
         return [(path.split(' -> '), count) for path, count in sorted_paths]
     
     def _find_chained_paths_to_screen_least_common(self, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:

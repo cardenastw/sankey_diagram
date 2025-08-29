@@ -134,10 +134,19 @@ class MonteCarloSimulator:
                 if goal in journey:
                     conversion_counts[goal] += 1
             
-            # Count path patterns
-            for i in range(len(journey) - 1):
-                path = f"{journey[i]} -> {journey[i+1]}"
-                path_counts[path] += 1
+            # Count path patterns of various lengths, avoiding repetitive loops
+            max_path_length = min(len(journey), 6)  # Up to 5-step paths
+            for path_length in range(2, max_path_length):  # 2 to 5 steps
+                for i in range(len(journey) - path_length + 1):
+                    path_segment = journey[i:i + path_length]
+                    
+                    # Skip paths that are mostly repetitive loops (same screen >50% of path)
+                    unique_screens = set(path_segment)
+                    if len(unique_screens) / len(path_segment) < 0.5:
+                        continue
+                    
+                    path = " -> ".join(path_segment)
+                    path_counts[path] += 1
         
         # Calculate metrics
         avg_journey_length = np.mean([len(j) for j in journeys])
