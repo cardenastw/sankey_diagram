@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import shlex
 from flow_analyzer import FlowPathAnalyzer
 from monte_carlo import MonteCarloSimulator
 from visualizer import FlowPathVisualizer
@@ -38,8 +39,12 @@ class InteractiveFlowAnalyzer:
     def show_help(self):
         print("""
 Available commands:
+  top-paths [N]                                 - Show N most common paths overall (default: 10)
   most-common-to <screen> [--where field=value]  - Find most common paths to a screen with optional filtering
+  least-common-to <screen> [N]                 - Find N least common paths to a screen (default: 5)
   paths <start> <end>                           - Find paths from start to end screen
+  
+  Note: Use quotes for screen names with spaces (e.g., "DNA Others")
   stats                                         - Show flow statistics
   fields                                        - List available segmentation fields
   simulate --change <from>-><to> <probability> [--goal screen1,screen2] - Modify transition and run simulation
@@ -49,13 +54,19 @@ Available commands:
   simulate --visualize sankey <from>-><to>                             - Create modified Sankey diagram
   simulate --reset                                                     - Reset all modifications to baseline
   simulate --status                                                    - Show current modifications
+  viz <type> [<start> <end>] [--output dir]    - Generate visualizations (sankey, flow, heatmap, network, all)
   help                                          - Show this help message
   exit                                          - Exit the interactive session
 
 Examples:
+  top-paths
+  top-paths 15
   most-common-to Cart
+  most-common-to "DNA Others"
   most-common-to Checkout --where purchased=true
   most-common-to Products --where device=mobile
+  least-common-to Cart
+  least-common-to "DNA Others" 3
   paths Home Checkout
   stats
   simulate --change Landing->Products 0.4
@@ -63,6 +74,9 @@ Examples:
   simulate --compare 5000 --goal ProductDetail,Reviews
   simulate --visualize comparison --goal Registration,ContactForm
   simulate --visualize sankey Landing->Checkout
+  viz sankey Home Checkout
+  viz all Home Checkout --output /tmp/viz
+  viz heatmap
         """)
     
     def handle_most_common_to(self, screen: str, top_n: int = 5, field_filter: dict = None):
@@ -81,6 +95,18 @@ Examples:
             print(f"No paths found leading to '{screen}'{filter_msg}")
             return
         
+        for i, (path, count) in enumerate(paths, 1):
+            print(f"{i}. {' -> '.join(path)} (Count: {count})")
+    
+    def handle_least_common_to(self, screen: str, top_n: int = 5):
+        """Find the least common paths leading to a screen."""
+        paths = self.analyzer.find_least_common_paths_to_screen(screen, top_n=top_n)
+        
+        if not paths:
+            print(f"No paths found leading to '{screen}'")
+            return
+        
+        print(f"\n{len(paths)} least common paths leading to '{screen}':")
         for i, (path, count) in enumerate(paths, 1):
             print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
@@ -150,6 +176,103 @@ Examples:
                     print(f"    Values: {', '.join(map(str, values))}")
         else:
             print("\nNo segmentation fields found in the data.")
+    
+    def handle_top_paths(self, top_n: int = 10):
+        """Show the most common paths overall."""
+        paths = self.analyzer.get_most_common_paths(top_n=top_n)
+        
+        if not paths:
+            print("No paths found in the data.")
+            return
+        
+        print(f"\nTop {len(paths)} most common paths:")
+        for i, (path, count) in enumerate(paths, 1):
+            print(f"{i:2d}. {' -> '.join(path)} (Count: {count})")
+    
+    def handle_viz(self, parts: list):
+        """Handle visualization generation commands."""
+        if len(parts) < 2:
+            print("Usage: viz <type> [<start> <end>] [--output dir]")
+            print("Types: sankey, flow, heatmap, network, all")
+            return
+        
+        viz_type = parts[1].lower()
+        valid_types = ['sankey', 'flow', 'heatmap', 'network', 'all']
+        
+        if viz_type not in valid_types:
+            print(f"Invalid visualization type. Choose from: {', '.join(valid_types)}")
+            return
+        
+        # Parse arguments
+        output_dir = 'output'
+        start_screen = None
+        end_screen = None
+        
+        # Look for --output flag
+        if '--output' in parts:
+            output_idx = parts.index('--output')
+            if output_idx + 1 < len(parts):
+                output_dir = parts[output_idx + 1]
+                # Remove --output and its value from parts
+                parts = parts[:output_idx] + parts[output_idx + 2:]
+        
+        # Parse start and end screens if provided
+        if len(parts) >= 4:  # viz type start end
+            start_screen = parts[2]
+            end_screen = parts[3]
+        elif len(parts) == 3:
+            print("Error: If providing screens, you must provide both start and end")
+            return
+        
+        # Create output directory
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print(f"\nGenerating {viz_type} visualization(s)...")
+        if start_screen and end_screen:
+            print(f"Path: {start_screen} -> {end_screen}")
+        print(f"Output directory: {output_dir}")
+        
+        try:
+            if viz_type in ['flow', 'all']:
+                if start_screen and end_screen:
+                    print("Creating flow diagram...")
+                    self.visualizer.create_flow_diagram(
+                        start_screen, end_screen, 5,
+                        f"{output_dir}/flow_diagram.png"
+                    )
+                    print(f"✓ Flow diagram saved to {output_dir}/flow_diagram.png")
+                else:
+                    print("⚠ Flow diagram requires start and end screens")
+            
+            if viz_type in ['sankey', 'all']:
+                if start_screen and end_screen:
+                    print("Creating Sankey diagram...")
+                    self.visualizer.create_interactive_sankey(
+                        start_screen, end_screen, 5,
+                        f"{output_dir}/sankey_diagram.html"
+                    )
+                    print(f"✓ Sankey diagram saved to {output_dir}/sankey_diagram.html")
+                else:
+                    print("⚠ Sankey diagram requires start and end screens")
+            
+            if viz_type in ['heatmap', 'all']:
+                print("Creating transition heatmap...")
+                self.visualizer.create_heatmap(f"{output_dir}/heatmap.html")
+                print(f"✓ Heatmap saved to {output_dir}/heatmap.html")
+            
+            if viz_type in ['network', 'all']:
+                print("Creating network graph...")
+                self.visualizer.create_network_graph(
+                    min_transitions=1,
+                    output_file=f"{output_dir}/network_graph.html"
+                )
+                print(f"✓ Network graph saved to {output_dir}/network_graph.html")
+            
+            print(f"\n✅ Visualization(s) complete! Check {output_dir}/ for results.")
+            
+        except Exception as e:
+            print(f"❌ Error generating visualizations: {e}")
     
     def handle_simulate(self, parts: list):
         """Handle simulation commands."""
@@ -325,7 +448,13 @@ Examples:
                 if not user_input:
                     continue
                 
-                parts = user_input.split()
+                try:
+                    parts = shlex.split(user_input)
+                except ValueError as e:
+                    print(f"Error parsing command: {e}")
+                    print("Make sure quotes are properly closed.")
+                    continue
+                    
                 command = parts[0].lower()
                 
                 if command == 'exit':
@@ -339,6 +468,11 @@ Examples:
                     self.handle_fields()
                 elif command == 'simulate':
                     self.handle_simulate(parts)
+                elif command == 'top-paths':
+                    top_n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
+                    self.handle_top_paths(top_n)
+                elif command == 'viz':
+                    self.handle_viz(parts)
                 elif command == 'most-common-to':
                     if len(parts) < 2:
                         print("Usage: most-common-to <screen> [--where field=value]")
@@ -353,6 +487,13 @@ Examples:
                     top_n = int(remaining_parts[0]) if remaining_parts and remaining_parts[0].isdigit() else 5
                     
                     self.handle_most_common_to(screen, top_n, field_filter)
+                elif command == 'least-common-to':
+                    if len(parts) < 2:
+                        print("Usage: least-common-to <screen> [N]")
+                        continue
+                    screen = parts[1]
+                    top_n = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 5
+                    self.handle_least_common_to(screen, top_n)
                 elif command == 'paths':
                     if len(parts) < 3:
                         print("Usage: paths <start> <end>")

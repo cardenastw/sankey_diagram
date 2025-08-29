@@ -846,6 +846,38 @@ class FlowPathAnalyzer:
         sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
         return [(path.split(' -> '), count) for path, count in sorted_paths]
     
+    def find_least_common_paths_to_screen(self, end_screen: str, max_length: int = 10, 
+                                         top_n: int = 10) -> List[Tuple[List[str], int]]:
+        """Find the least common paths that lead to a specific end screen.
+        
+        Args:
+            end_screen: The target screen to find paths to
+            max_length: Maximum path length to consider
+            top_n: Number of least common paths to return
+            
+        Returns:
+            List of (path, count) tuples sorted by frequency (ascending)
+        """
+        path_counts = defaultdict(int)
+        
+        for session in self.sessions:
+            screens = session['screens']
+            session_count = session.get('count', 1)  # Use aggregated count
+            
+            # Find all occurrences of end_screen in this session
+            for j, screen in enumerate(screens):
+                if screen == end_screen:
+                    # Look backwards to find paths leading to this screen
+                    start_idx = max(0, j - max_length + 1)
+                    path = screens[start_idx:j+1]
+                    if len(path) >= 2:  # At least start->end
+                        path_str = ' -> '.join(path)
+                        path_counts[path_str] += session_count
+        
+        # Sort by frequency (ascending) and return bottom results
+        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1])[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
     def find_most_common_paths_to_screen_with_filter(self, end_screen: str, 
                                                     field_filter: Dict[str, str] = None,
                                                     max_length: int = 10, 
