@@ -402,17 +402,66 @@ class FlowPathAnalyzer:
                 sorted(path_counts.items(), key=lambda x: x[1], reverse=True)]
     
     def get_most_common_paths(self, top_n: int = 10) -> List[Tuple[List[str], int]]:
-        all_paths = defaultdict(int)
-        
-        for session in self.sessions:
-            screens = session['screens']
-            for length in range(2, min(6, len(screens) + 1)):
-                for i in range(len(screens) - length + 1):
-                    path = tuple(screens[i:i+length])
-                    all_paths[path] += 1
-        
-        sorted_paths = sorted(all_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
-        return [(list(path), count) for path, count in sorted_paths]
+        if self.is_pre_aggregated:
+            # For pre-aggregated data, return the chunk paths and try to find longer paths
+            # First, get all chunk paths
+            chunk_paths = {}
+            for path_str, count in self.flow_paths.items():
+                chunk_paths[path_str] = count
+            
+            # Also try to find some longer chained paths by exploring common transitions
+            from collections import defaultdict, deque
+            
+            chunks_starting_with = defaultdict(list)
+            chunks_ending_with = defaultdict(list)
+            
+            # Organize chunks by their start and end screens
+            for chunk in self.path_chunks:
+                path = chunk['path']
+                if len(path) >= 2:
+                    start = path[0]
+                    end = path[-1]
+                    chunks_starting_with[start].append(chunk)
+                    chunks_ending_with[end].append(chunk)
+            
+            # Find some longer paths by simple chaining (limit to prevent explosion)
+            explored_chains = set()
+            for chunk in self.path_chunks[:50]:  # Limit exploration
+                if len(chunk['path']) >= 3:
+                    path = chunk['path']
+                    end_screen = path[-1]
+                    
+                    # Try to extend with one more chunk
+                    for next_chunk in chunks_starting_with[end_screen][:5]:  # Limit branches
+                        next_path = next_chunk['path']
+                        if len(next_path) > 1:
+                            chained = path + next_path[1:]  # Skip overlap
+                            if len(chained) <= 6:  # Reasonable limit
+                                chained_str = ' -> '.join(chained)
+                                if chained_str not in explored_chains:
+                                    explored_chains.add(chained_str)
+                                    min_count = min(chunk['count'], next_chunk['count'])
+                                    if chained_str not in chunk_paths or chunk_paths[chained_str] < min_count:
+                                        chunk_paths[chained_str] = min_count
+            
+            # Sort and return results
+            sorted_paths = sorted(chunk_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            return [(path.split(' -> '), count) for path, count in sorted_paths]
+        else:
+            # Original implementation for raw session data
+            all_paths = defaultdict(int)
+            
+            for session in self.sessions:
+                screens = session['screens']
+                session_count = session.get('count', 1)
+                
+                for length in range(2, min(6, len(screens) + 1)):
+                    for i in range(len(screens) - length + 1):
+                        path = tuple(screens[i:i+length])
+                        all_paths[path] += session_count
+            
+            sorted_paths = sorted(all_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            return [(list(path), count) for path, count in sorted_paths]
     
     def get_preceding_steps(self, session_screens: List[str], target_screen: str, 
                            max_steps: int = 3) -> List[str]:
