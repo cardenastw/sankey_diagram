@@ -39,7 +39,7 @@ class InteractiveFlowAnalyzer:
     def show_help(self):
         print("""
 Available commands:
-  top-paths [N]                                 - Show N most common paths overall (default: 10)
+  top-paths [N] [--where field=value]          - Show N most common paths overall (default: 10)
   most-common-to <screen> [--where field=value]  - Find most common paths to a screen with optional filtering
   least-common-to <screen> [N] [--where field=value] - Find N least common paths to a screen (default: 5)
   paths <start> <end> [--where field=value]    - Find paths from start to end screen
@@ -61,6 +61,8 @@ Available commands:
 Examples:
   top-paths
   top-paths 15
+  top-paths --where device=mobile
+  top-paths 10 --where traffic_source=organic
   most-common-to Cart
   most-common-to "DNA Others"
   most-common-to Checkout --where purchased=true

@@ -478,12 +478,12 @@ class FlowPathAnalyzer:
     def get_most_common_paths(self, top_n: int = 10) -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
             # For pre-aggregated data, return the chunk paths and try to find longer paths
-            # First, get all chunk paths
+            # First, get all original chunk paths
             chunk_paths = {}
             for path_str, count in self.flow_paths.items():
                 chunk_paths[path_str] = count
             
-            # Also try to find some longer chained paths by exploring common transitions
+            # Also try to find longer chained paths by exploring common transitions
             from collections import defaultdict, deque
             
             chunks_starting_with = defaultdict(list)
@@ -498,31 +498,48 @@ class FlowPathAnalyzer:
                     chunks_starting_with[start].append(chunk)
                     chunks_ending_with[end].append(chunk)
             
-            # Find some longer paths by simple chaining (limit to prevent explosion)
+            # Enhanced chaining - try to build longer paths from 2-screen paths
             explored_chains = set()
-            for chunk in self.path_chunks[:50]:  # Limit exploration
-                if len(chunk['path']) >= 3:
-                    path = chunk['path']
-                    end_screen = path[-1]
+            max_chain_length = 8  # Maximum path length to explore
+            
+            # Start BFS from each chunk to build longer paths
+            for start_chunk in self.path_chunks:
+                queue = deque([(start_chunk['path'], start_chunk['count'], {tuple(start_chunk['path'])})])
+                
+                while queue:
+                    current_path, current_count, visited_paths = queue.popleft()
                     
-                    # Try to extend with one more chunk
-                    for next_chunk in chunks_starting_with[end_screen][:5]:  # Limit branches
+                    if len(current_path) > max_chain_length:
+                        continue
+                    
+                    # Record this path
+                    path_str = ' -> '.join(current_path)
+                    if path_str not in explored_chains:
+                        explored_chains.add(path_str)
+                        if path_str not in chunk_paths or chunk_paths[path_str] < current_count:
+                            chunk_paths[path_str] = current_count
+                    
+                    # Try to extend this path
+                    last_screen = current_path[-1]
+                    for next_chunk in chunks_starting_with[last_screen]:
                         next_path = next_chunk['path']
-                        if len(next_path) > 1:
-                            chained = path + next_path[1:]  # Skip overlap
-                            if len(chained) <= 6:  # Reasonable limit
-                                chained_str = ' -> '.join(chained)
-                                if chained_str not in explored_chains:
-                                    explored_chains.add(chained_str)
-                                    min_count = min(chunk['count'], next_chunk['count'])
-                                    if chained_str not in chunk_paths or chunk_paths[chained_str] < min_count:
-                                        chunk_paths[chained_str] = min_count
+                        next_path_tuple = tuple(next_path)
+                        
+                        # Avoid revisiting the same chunk and prevent infinite loops
+                        if next_path_tuple not in visited_paths and len(next_path) >= 2:
+                            # Chain paths (remove overlap)
+                            extended_path = current_path + next_path[1:]
+                            extended_count = min(current_count, next_chunk['count'])
+                            new_visited = visited_paths | {next_path_tuple}
+                            
+                            queue.append((extended_path, extended_count, new_visited))
             
             # Sort and return results
             sorted_paths = sorted(chunk_paths.items(), key=lambda x: x[1], reverse=True)[:top_n]
             return [(path.split(' -> '), count) for path, count in sorted_paths]
         else:
             # Original implementation for raw session data
+            from collections import defaultdict  # Fix the missing import
             all_paths = defaultdict(int)
             
             for session in self.sessions:
