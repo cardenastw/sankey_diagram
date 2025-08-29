@@ -19,6 +19,7 @@ class FlowPathAnalyzer:
         self.is_pre_aggregated = is_pre_aggregated
         self.show_progress = show_progress
         self.aggregated_paths = []  # Store pre-aggregated path data
+        self.path_chunks = []  # Store chunks for chaining when pre-aggregated
         self.event_metadata = defaultdict(lambda: defaultdict(dict))  # session_id -> event_index -> metadata
         
     def load_data(self, data_source, progress_callback: Optional[Callable[[str, float], None]] = None):
@@ -179,7 +180,7 @@ class FlowPathAnalyzer:
                 progress_callback(f"Building sessions... ({session_idx + 1}/{total_sessions})", progress)
     
     def _process_aggregated_data(self, data, progress_callback: Optional[Callable[[str, float], None]] = None):
-        """Process pre-aggregated data format.
+        """Process pre-aggregated data format as chainable chunks.
         
         Expected format:
         [
@@ -193,8 +194,11 @@ class FlowPathAnalyzer:
         ]
         """
         # Create progress bar for aggregated data processing
-        items_iterator = tqdm(data, desc="Processing aggregated data", disable=not self.show_progress) if self.show_progress else data
+        items_iterator = tqdm(data, desc="Processing aggregated chunks", disable=not self.show_progress) if self.show_progress else data
         total_items = len(data) if hasattr(data, '__len__') else 0
+        
+        # Store chunks for chaining
+        self.path_chunks = []
         
         for item_idx, item in enumerate(items_iterator):
             path = item.get('path', [])
@@ -203,14 +207,22 @@ class FlowPathAnalyzer:
             if len(path) < 2:
                 continue
             
-            # Store the aggregated path
+            # Store the chunk with metadata
+            chunk_data = {
+                'path': path,
+                'count': count,
+                'metadata': {k: v for k, v in item.items() if k not in ['path', 'count']}
+            }
+            self.path_chunks.append(chunk_data)
+            
+            # Store the aggregated path for compatibility
             self.aggregated_paths.append(item)
             
-            # Build flow_paths for compatibility
+            # Build individual chunk paths
             path_str = ' -> '.join(path)
             self.flow_paths[path_str] += count
             
-            # Build screen transitions
+            # Build screen transitions for each step in the chunk
             for i in range(len(path) - 1):
                 from_screen = path[i]
                 to_screen = path[i + 1]
@@ -222,10 +234,10 @@ class FlowPathAnalyzer:
             
             # Create synthetic session data for compatibility
             session_data = {
-                'session_id': f"aggregated_{len(self.sessions)}",
+                'session_id': f"chunk_{len(self.sessions)}",
                 'screens': path,
                 'traffic_source': traffic_source,
-                'count': count  # Store the aggregated count
+                'count': count
             }
             
             # Add all metadata fields
@@ -246,21 +258,12 @@ class FlowPathAnalyzer:
             # Update progress callback if provided
             if progress_callback and total_items > 0:
                 progress = 30.0 + (item_idx / total_items) * 65.0  # 30% to 95%
-                progress_callback(f"Processing aggregated data... ({item_idx + 1}/{total_items})", progress)
+                progress_callback(f"Processing aggregated chunks... ({item_idx + 1}/{total_items})", progress)
     
     def find_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
-            # For pre-aggregated data, use existing flow_paths that were built during processing
-            matching_paths = {}
-            for path_str, count in self.flow_paths.items():
-                path = path_str.split(' -> ')
-                if (len(path) <= max_length and 
-                    path[0] == start_screen and 
-                    path[-1] == end_screen):
-                    matching_paths[path_str] = count
-            
-            sorted_paths = sorted(matching_paths.items(), key=lambda x: x[1], reverse=True)
-            return [(path.split(' -> '), count) for path, count in sorted_paths]
+            # Chain chunks together to find longer paths
+            return self._find_chained_paths(start_screen, end_screen, max_length)
         else:
             # Original implementation for raw event data
             paths = []
@@ -280,6 +283,87 @@ class FlowPathAnalyzer:
             sorted_paths = sorted(self.flow_paths.items(), key=lambda x: x[1], reverse=True)
             
             return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
+    def _find_chained_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
+        """Chain together pre-aggregated chunks to find longer paths."""
+        from collections import defaultdict, deque
+        
+        # Build a graph of chunk connections
+        chunk_graph = defaultdict(list)
+        chunks_starting_with = defaultdict(list)
+        chunks_ending_with = defaultdict(list)
+        
+        # Organize chunks by their start and end screens
+        for chunk in self.path_chunks:
+            path = chunk['path']
+            count = chunk['count']
+            start = path[0]
+            end = path[-1]
+            
+            chunks_starting_with[start].append(chunk)
+            chunks_ending_with[end].append(chunk)
+            
+            # Create connections between chunks that can be chained
+            for other_chunk in self.path_chunks:
+                other_path = other_chunk['path']
+                # If this chunk ends where another begins, they can be chained
+                if len(path) > 1 and len(other_path) > 1 and path[-1] == other_path[0]:
+                    chunk_graph[tuple(path)].append(other_chunk)
+        
+        # Use BFS to find all possible chained paths
+        found_paths = {}
+        queue = deque()
+        
+        # Start with chunks that begin with start_screen
+        for chunk in chunks_starting_with[start_screen]:
+            path = chunk['path']
+            count = chunk['count']
+            queue.append((path, count, {tuple(path)}))  # path, count, visited_chunks
+        
+        while queue:
+            current_path, current_count, visited_chunks = queue.popleft()
+            
+            if len(current_path) > max_length:
+                continue
+                
+            # If we've reached the end screen, record this path
+            if current_path[-1] == end_screen:
+                path_str = ' -> '.join(current_path)
+                if path_str not in found_paths:
+                    found_paths[path_str] = 0
+                found_paths[path_str] += current_count
+                continue
+            
+            # Try to extend this path with compatible chunks
+            current_end = current_path[-1]
+            for next_chunk in chunks_starting_with[current_end]:
+                next_path = next_chunk['path']
+                next_chunk_tuple = tuple(next_path)
+                
+                if next_chunk_tuple in visited_chunks:
+                    continue  # Avoid infinite loops
+                
+                # Chain the chunks (overlap by 1 screen)
+                if len(next_path) > 1:
+                    chained_path = current_path + next_path[1:]  # Skip first element to avoid duplication
+                    chained_count = min(current_count, next_chunk['count'])  # Use minimum count
+                    new_visited = visited_chunks | {next_chunk_tuple}
+                    
+                    queue.append((chained_path, chained_count, new_visited))
+        
+        # Also include direct chunks that match start->end
+        for path_str, count in self.flow_paths.items():
+            path = path_str.split(' -> ')
+            if (len(path) <= max_length and 
+                path[0] == start_screen and 
+                path[-1] == end_screen):
+                if path_str not in found_paths:
+                    found_paths[path_str] = 0
+                found_paths[path_str] += count
+        
+        # Sort and return results
+        sorted_paths = sorted(found_paths.items(), key=lambda x: x[1], reverse=True)
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
     
     def find_all_paths_between(self, start_screen: str, end_screen: str, 
                                max_depth: int = 5) -> List[Tuple[List[str], int]]:
