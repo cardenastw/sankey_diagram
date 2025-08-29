@@ -1182,13 +1182,8 @@ class FlowPathAnalyzer:
                     queue.append((extended_reversed_path, chained_count, new_visited, depth + 1))
                     added_extensions += 1
         
-        # Also include direct chunks that end with end_screen
-        for path_str, count in self.flow_paths.items():
-            path = path_str.split(' -> ')
-            if (len(path) <= max_length and path[-1] == end_screen):
-                if path_str not in found_paths:
-                    found_paths[path_str] = 0
-                found_paths[path_str] += count
+        # Direct chunks are already included via BFS exploration above
+        # Removing this section to prevent double-counting
         
         # Sort by a combination of frequency and path length (prioritize longer paths)
         def sort_key(item):
@@ -1199,6 +1194,91 @@ class FlowPathAnalyzer:
         
         sorted_paths = sorted(found_paths.items(), key=sort_key, reverse=True)
         return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
+    def _find_chained_paths_to_screen_least_common(self, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
+        """Chain together pre-aggregated chunks to find LEAST common paths leading to a specific screen."""
+        from collections import defaultdict, deque
+        
+        # Build a graph of chunk connections (optimized)
+        chunks_starting_with = defaultdict(list)
+        chunks_ending_with = defaultdict(list)
+        
+        # Organize chunks by their start and end screens
+        for chunk in self.path_chunks:
+            path = chunk['path']
+            if len(path) < 2:
+                continue
+            start = path[0]
+            end = path[-1]
+            
+            chunks_starting_with[start].append(chunk)
+            chunks_ending_with[end].append(chunk)
+        
+        # Use BFS to find all possible chained paths that end with end_screen
+        found_paths = {}
+        queue = deque()
+        max_depth = min(max_length // 2, 8)  # Increase depth for finding paths to a screen
+        
+        # Start with chunks that END with end_screen (working backwards)
+        ending_chunks = sorted(chunks_ending_with[end_screen], key=lambda x: x['count'], reverse=True)
+        for chunk in ending_chunks:
+            path = chunk['path']
+            count = chunk['count']
+            # Store as (reversed_path, count, visited_chunks, depth) - we'll reverse back at the end
+            queue.append((path[::-1], count, {tuple(path)}, 1))
+        
+        while queue and len(found_paths) < max_paths:
+            current_reversed_path, current_count, visited_chunks, depth = queue.popleft()
+            
+            if len(current_reversed_path) > max_length or depth > max_depth:
+                continue
+            
+            # Convert back to normal direction and record this path
+            normal_path = current_reversed_path[::-1]
+            path_str = ' -> '.join(normal_path)
+            if path_str not in found_paths:
+                found_paths[path_str] = 0
+            found_paths[path_str] += current_count
+            
+            # Try to extend this path backwards (prepend chunks that end where this starts)
+            current_start = current_reversed_path[-1]  # Last in reversed = first in normal
+            
+            # Sort previous chunks by count for better early results
+            prev_chunks = sorted(chunks_ending_with[current_start], key=lambda x: x['count'], reverse=True)
+            added_extensions = 0
+            
+            for prev_chunk in prev_chunks:
+                if added_extensions >= 3:  # Limit branching to prevent explosion
+                    break
+                    
+                prev_path = prev_chunk['path']
+                prev_chunk_tuple = tuple(prev_path)
+                
+                if prev_chunk_tuple in visited_chunks:
+                    continue  # Avoid infinite loops
+                
+                # Chain the chunks backwards (overlap by 1 screen)
+                if len(prev_path) > 1:
+                    # Prepend the previous chunk (in reversed form, excluding the overlapping screen)
+                    extended_reversed_path = current_reversed_path + prev_path[::-1][1:]
+                    chained_count = min(current_count, prev_chunk['count'])  # Use minimum count
+                    new_visited = visited_chunks | {prev_chunk_tuple}
+                    
+                    queue.append((extended_reversed_path, chained_count, new_visited, depth + 1))
+                    added_extensions += 1
+        
+        # Direct chunks are already included via BFS exploration above
+        # Removing this section to prevent double-counting (same fix as most-common-to)
+        
+        # Sort by frequency (ASCENDING for least common) and path length
+        def sort_key(item):
+            path_str, count = item
+            path_length = len(path_str.split(' -> '))
+            # Primary sort by count (ascending), secondary sort by length (longer paths preferred for ties)
+            return (count, -path_length)  # Negative path_length to prefer longer paths in case of tie
+        
+        sorted_paths = sorted(found_paths.items(), key=sort_key)  # No reverse=True for ascending order
+        return [(path.split(' -> '), count) for path, count in sorted_paths[:max_paths]]
     
     def find_least_common_paths_to_screen(self, end_screen: str, max_length: int = 10, 
                                          top_n: int = 10) -> List[Tuple[List[str], int]]:
@@ -1212,25 +1292,30 @@ class FlowPathAnalyzer:
         Returns:
             List of (path, count) tuples sorted by frequency (ascending)
         """
-        path_counts = defaultdict(int)
-        
-        for session in self.sessions:
-            screens = session['screens']
-            session_count = session.get('count', 1)  # Use aggregated count
+        if self.is_pre_aggregated:
+            # Handle pre-aggregated data by chaining chunks backwards from the end screen
+            return self._find_chained_paths_to_screen_least_common(end_screen, max_length, top_n)
+        else:
+            # Handle raw session data
+            path_counts = defaultdict(int)
             
-            # Find all occurrences of end_screen in this session
-            for j, screen in enumerate(screens):
-                if screen == end_screen:
-                    # Look backwards to find paths leading to this screen
-                    start_idx = max(0, j - max_length + 1)
-                    path = screens[start_idx:j+1]
-                    if len(path) >= 2:  # At least start->end
-                        path_str = ' -> '.join(path)
-                        path_counts[path_str] += session_count
-        
-        # Sort by frequency (ascending) and return bottom results
-        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1])[:top_n]
-        return [(path.split(' -> '), count) for path, count in sorted_paths]
+            for session in self.sessions:
+                screens = session['screens']
+                session_count = session.get('count', 1)  # Use aggregated count
+                
+                # Find all occurrences of end_screen in this session
+                for j, screen in enumerate(screens):
+                    if screen == end_screen:
+                        # Look backwards to find paths leading to this screen
+                        start_idx = max(0, j - max_length + 1)
+                        path = screens[start_idx:j+1]
+                        if len(path) >= 2:  # At least start->end
+                            path_str = ' -> '.join(path)
+                            path_counts[path_str] += session_count
+            
+            # Sort by frequency (ascending) and return bottom results
+            sorted_paths = sorted(path_counts.items(), key=lambda x: x[1])[:top_n]
+            return [(path.split(' -> '), count) for path, count in sorted_paths]
     
     def find_least_common_paths_to_screen_with_filter(self, end_screen: str, 
                                                      field_filter: Dict[str, str] = None,
