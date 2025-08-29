@@ -1149,71 +1149,75 @@ class FlowPathAnalyzer:
         """Find all paths (direct and chained) that end with the target screen for pre-aggregated data."""
         from collections import defaultdict, deque
         
-        # Start with direct paths from flow_paths
-        found_paths = {}
-        for path_str, count in self.flow_paths.items():
-            path = path_str.split(' -> ')
-            if len(path) <= max_length and path[-1] == end_screen:
-                found_paths[path_str] = count
-        
-        # Build simple chaining - find paths that can connect to form longer chains ending with target
-        chunks_ending_with = defaultdict(list)
+        # Build forward chains from all possible starting chunks to the target screen
         chunks_starting_with = defaultdict(list)
         
-        # Organize chunks by their start and end screens
+        # Organize chunks by their start screens
         for chunk in self.path_chunks:
             path = chunk['path']
             if len(path) >= 2:
                 start = path[0]
-                end = path[-1]
                 chunks_starting_with[start].append(chunk)
-                chunks_ending_with[end].append(chunk)
         
-        # Use iterative approach to build longer chains (simpler than recursive BFS)
-        max_iterations = min(max_length, 4)  # Limit iterations to prevent excessive computation
+        # Use BFS to build paths forward from all starting points to the end_screen
+        found_paths = {}
+        queue = deque()
         
-        for iteration in range(max_iterations):
-            new_paths = {}
+        # Start BFS from all chunks (each chunk is a potential starting point)
+        for chunk in self.path_chunks:
+            path = chunk['path']
+            count = chunk['count']
             
-            # For each existing path, try to extend it backwards
-            for path_str, count in found_paths.items():
-                path = path_str.split(' -> ')
-                if len(path) >= max_length:
-                    continue
-                    
-                first_screen = path[0]
+            # Only start with chunks that could potentially lead to end_screen
+            if len(path) >= 2:
+                path_str = ' -> '.join(path)
+                queue.append((path, count, {tuple(path)}, 1))  # (path, count, visited_chunks, depth)
                 
-                # Find chunks that end where this path starts
-                for chunk in chunks_ending_with.get(first_screen, []):
-                    chunk_path = chunk['path']
-                    if len(chunk_path) >= 2:
-                        # Check for cycles: ensure no screen in chunk_path (except the connecting one) already exists in path
-                        path_screens = set(path)
-                        chunk_screens = set(chunk_path[:-1])  # Exclude the last screen (connecting screen)
-                        
-                        # If there's any overlap (cycle), skip this extension
-                        if chunk_screens & path_screens:
-                            continue
-                        
-                        # Create extended path (chunk + path, avoiding duplication of connecting screen)
-                        extended_path = chunk_path + path[1:]  # Skip first element of path to avoid duplication
-                        if len(extended_path) <= max_length:
-                            extended_path_str = ' -> '.join(extended_path)
-                            # Use minimum count between the chunk and existing path
-                            extended_count = min(chunk['count'], count)
-                            
-                            if extended_path_str not in found_paths:
-                                new_paths[extended_path_str] = extended_count
-                            else:
-                                # If path already exists, use the higher count
-                                new_paths[extended_path_str] = max(found_paths.get(extended_path_str, 0), extended_count)
+                # If this chunk already ends with target, add it
+                if path[-1] == end_screen:
+                    found_paths[path_str] = count
+        
+        # BFS to extend paths
+        max_depth = min(max_length, 4)
+        
+        while queue:
+            current_path, current_count, visited_chunks, depth = queue.popleft()
             
-            # Add new paths to found_paths
-            found_paths.update(new_paths)
+            if depth >= max_depth or len(current_path) >= max_length:
+                continue
+                
+            last_screen = current_path[-1]
             
-            # If no new paths were found, stop iterating
-            if not new_paths:
-                break
+            # Try to extend this path forward
+            for next_chunk in chunks_starting_with.get(last_screen, []):
+                next_path = next_chunk['path']
+                next_chunk_tuple = tuple(next_path)
+                
+                # Skip if we've already used this chunk
+                if next_chunk_tuple in visited_chunks:
+                    continue
+                
+                # Check for cycles: ensure no screen in next_path (except connecting one) already exists
+                current_screens = set(current_path)
+                next_screens = set(next_path[1:])  # Exclude first screen (connecting screen)
+                
+                if next_screens & current_screens:
+                    continue
+                
+                # Create extended path
+                extended_path = current_path + next_path[1:]  # Skip first element to avoid duplication
+                if len(extended_path) <= max_length:
+                    extended_count = min(current_count, next_chunk['count'])
+                    new_visited = visited_chunks | {next_chunk_tuple}
+                    
+                    # Add to queue for further extension
+                    queue.append((extended_path, extended_count, new_visited, depth + 1))
+                    
+                    # If this path ends with target, record it
+                    if extended_path[-1] == end_screen:
+                        extended_path_str = ' -> '.join(extended_path)
+                        if extended_path_str not in found_paths or found_paths[extended_path_str] < extended_count:
+                            found_paths[extended_path_str] = extended_count
         
         # Sort by frequency and path length
         def sort_key(item):
