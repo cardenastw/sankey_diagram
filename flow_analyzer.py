@@ -1187,6 +1187,14 @@ class FlowPathAnalyzer:
                 for chunk in chunks_ending_with.get(first_screen, []):
                     chunk_path = chunk['path']
                     if len(chunk_path) >= 2:
+                        # Check for cycles: ensure no screen in chunk_path (except the connecting one) already exists in path
+                        path_screens = set(path)
+                        chunk_screens = set(chunk_path[:-1])  # Exclude the last screen (connecting screen)
+                        
+                        # If there's any overlap (cycle), skip this extension
+                        if chunk_screens & path_screens:
+                            continue
+                        
                         # Create extended path (chunk + path, avoiding duplication of connecting screen)
                         extended_path = chunk_path + path[1:]  # Skip first element of path to avoid duplication
                         if len(extended_path) <= max_length:
