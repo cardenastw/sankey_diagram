@@ -103,7 +103,8 @@ Examples:
             return
         
         for i, (path, count) in enumerate(paths, 1):
-            print(f"{i}. {' -> '.join(path)} (Count: {count})")
+            path_length = len(path)
+            print(f"{i}. {' -> '.join(path)} ({path_length} steps, Count: {count})")
     
     def handle_least_common_to(self, screen: str, top_n: int = 5, field_filter: dict = None):
         """Find the least common paths leading to a screen."""
@@ -123,7 +124,8 @@ Examples:
             return
         
         for i, (path, count) in enumerate(paths, 1):
-            print(f"{i}. {' -> '.join(path)} (Count: {count})")
+            path_length = len(path)
+            print(f"{i}. {' -> '.join(path)} ({path_length} steps, Count: {count})")
     
     def _parse_where_clause(self, parts: list) -> dict:
         """Parse --where field=value clauses from command parts."""
@@ -179,7 +181,8 @@ Examples:
             
             # Show paths with context
             for i, (path, count) in enumerate(paths, 1):
-                print(f"\n{i}. {' -> '.join(path)} (Count: {count})")
+                path_length = len(path)
+                print(f"\n{i}. {' -> '.join(path)} ({path_length} steps, Count: {count})")
                 
                 # Show context if available
                 path_str = ' -> '.join(path)
@@ -212,7 +215,8 @@ Examples:
                 return
             
             for i, (path, count) in enumerate(paths[:top_n], 1):
-                print(f"{i}. {' -> '.join(path)} (Count: {count})")
+                path_length = len(path)
+                print(f"{i}. {' -> '.join(path)} ({path_length} steps, Count: {count})")
     
     def handle_stats(self):
         stats = self.analyzer.get_statistics()
@@ -247,7 +251,8 @@ Examples:
         mode_desc = {'fast': 'Fast', 'medium': 'Medium', 'deep': 'Deep'}
         print(f"\nTop {len(paths)} most common paths ({mode_desc.get(exploration_mode, 'Fast')} exploration):")
         for i, (path, count) in enumerate(paths, 1):
-            print(f"{i:2d}. {' -> '.join(path)} (Count: {count})")
+            path_length = len(path)
+            print(f"{i:2d}. {' -> '.join(path)} ({path_length} steps, Count: {count})")
     
     def handle_viz(self, parts: list):
         """Handle visualization generation commands."""

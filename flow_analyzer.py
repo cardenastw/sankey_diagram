@@ -997,21 +997,23 @@ class FlowPathAnalyzer:
             
         Returns:
             List of (path, count) tuples sorted by frequency, prioritizing longer complete paths
+            Count represents the exact number of unique users/sessions that took each complete path.
         """
         if self.is_pre_aggregated:
             # For pre-aggregated data, find both direct paths and chained paths to the target screen
             return self._find_all_paths_to_screen(end_screen, max_length, top_n, ascending=False)
         else:
-            # Handle raw session data
-            path_counts = defaultdict(int)
-            session_paths = []  # Store (session_id, path, count) for deduplication
+            # Handle raw session data - track unique sessions per complete path
+            path_sessions = defaultdict(set)  # Track unique sessions per path
             
             for session in self.sessions:
                 screens = session['screens']
-                session_count = session.get('count', 1)  # Use aggregated count
                 session_id = session.get('session_id', id(session))
+                session_count = session.get('count', 1)  # For aggregated data
                 
                 # Find all occurrences of end_screen in this session
+                session_paths = set()  # Track paths this session has taken to avoid double counting
+                
                 for j, screen in enumerate(screens):
                     if screen == end_screen:
                         # Find the longest possible path to this end_screen occurrence
@@ -1034,19 +1036,18 @@ class FlowPathAnalyzer:
                         path = screens[start_idx:j+1]
                         if len(path) >= 2:  # At least start->end
                             path_str = ' -> '.join(path)
-                            # Only record one path per session per end_screen occurrence to avoid double-counting
-                            session_paths.append((session_id, j, path_str, session_count))
+                            # Only count each unique path once per session
+                            if path_str not in session_paths:
+                                session_paths.add(path_str)
+                                if self.is_pre_aggregated:
+                                    # For pre-aggregated data, add the session count times
+                                    for _ in range(session_count):
+                                        path_sessions[path_str].add(f"{session_id}_{_}")
+                                else:
+                                    path_sessions[path_str].add(session_id)
             
-            # Deduplicate by session and end_screen occurrence, keeping the longest path
-            session_occurrence_paths = {}
-            for session_id, end_idx, path_str, session_count in session_paths:
-                key = (session_id, end_idx)
-                if key not in session_occurrence_paths or len(path_str.split(' -> ')) > len(session_occurrence_paths[key][0].split(' -> ')):
-                    session_occurrence_paths[key] = (path_str, session_count)
-            
-            # Count deduplicated paths
-            for path_str, session_count in session_occurrence_paths.values():
-                path_counts[path_str] += session_count
+            # Convert to counts of unique sessions
+            path_counts = {path: len(sessions) for path, sessions in path_sessions.items()}
             
             # Sort by a combination of frequency and path length (prioritize longer paths)
             def sort_key(item):
@@ -1527,27 +1528,42 @@ class FlowPathAnalyzer:
             
         Returns:
             List of (path, count) tuples sorted by frequency (ascending)
+            Count represents the exact number of unique users/sessions that took each complete path.
         """
         if self.is_pre_aggregated:
             # For pre-aggregated data, find both direct paths and chained paths to the target screen
             return self._find_all_paths_to_screen(end_screen, max_length, top_n, ascending=True)
         else:
-            # Handle raw session data
-            path_counts = defaultdict(int)
+            # Handle raw session data - track unique sessions per complete path
+            path_sessions = defaultdict(set)  # Track unique sessions per path
             
             for session in self.sessions:
                 screens = session['screens']
-                session_count = session.get('count', 1)  # Use aggregated count
+                session_id = session.get('session_id', id(session))
+                session_count = session.get('count', 1)  # For aggregated data
                 
                 # Find all occurrences of end_screen in this session
+                session_paths = set()  # Track paths this session has taken to avoid double counting
+                
                 for j, screen in enumerate(screens):
                     if screen == end_screen:
-                        # Look backwards to find paths leading to this screen
+                        # Look backwards to find the longest possible path leading to this screen
                         start_idx = max(0, j - max_length + 1)
                         path = screens[start_idx:j+1]
                         if len(path) >= 2:  # At least start->end
                             path_str = ' -> '.join(path)
-                            path_counts[path_str] += session_count
+                            # Only count each unique path once per session
+                            if path_str not in session_paths:
+                                session_paths.add(path_str)
+                                if self.is_pre_aggregated:
+                                    # For pre-aggregated data, add the session count times
+                                    for _ in range(session_count):
+                                        path_sessions[path_str].add(f"{session_id}_{_}")
+                                else:
+                                    path_sessions[path_str].add(session_id)
+            
+            # Convert to counts of unique sessions
+            path_counts = {path: len(sessions) for path, sessions in path_sessions.items()}
             
             # Sort by frequency (ascending) and return bottom results
             sorted_paths = sorted(path_counts.items(), key=lambda x: x[1])[:top_n]
