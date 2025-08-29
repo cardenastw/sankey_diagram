@@ -1323,6 +1323,114 @@ class FlowPathAnalyzer:
         sorted_paths = sorted(found_paths.items(), key=sort_key, reverse=True)[:top_n]
         return [(path.split(' -> '), count) for path, count in sorted_paths]
     
+    def _find_filtered_paths_to_screen(self, end_screen: str, field_filter: Dict[str, str], max_length: int = 10, top_n: int = 10) -> List[Tuple[List[str], int]]:
+        """Find paths to screen using chaining, but only from chunks that match the filter criteria."""
+        from collections import defaultdict, deque
+        
+        # Filter chunks based on field criteria
+        filtered_chunks = []
+        for chunk in self.path_chunks:
+            # Check if this chunk matches the filter criteria
+            filter_match = True
+            for field, expected_value in field_filter.items():
+                chunk_value = chunk.get('metadata', {}).get(field)
+                if chunk_value is None or str(chunk_value).lower() != str(expected_value).lower():
+                    filter_match = False
+                    break
+            
+            if filter_match:
+                filtered_chunks.append(chunk)
+        
+        if not filtered_chunks:
+            return []  # No chunks match the filter
+        
+        # Build forward chains from filtered chunks only
+        chunks_starting_with = defaultdict(list)
+        
+        # Organize filtered chunks by their start screens
+        for chunk in filtered_chunks:
+            path = chunk['path']
+            if len(path) >= 2:
+                start = path[0]
+                chunks_starting_with[start].append(chunk)
+        
+        # Use BFS to build paths forward from filtered chunks to the end_screen
+        found_paths = {}
+        queue = deque()
+        
+        # Start BFS from filtered chunks only
+        for chunk in filtered_chunks:
+            path = chunk['path']
+            count = chunk['count']
+            
+            if len(path) >= 2:
+                path_str = ' -> '.join(path)
+                queue.append((path, count, {tuple(path)}, 1))  # (path, count, visited_chunks, depth)
+                
+                # If this chunk already ends with target, add it
+                if path[-1] == end_screen:
+                    found_paths[path_str] = count
+        
+        # BFS to extend paths, but only allow extensions with chunks that also match the filter
+        max_depth = min(max_length, 4)
+        
+        while queue:
+            current_path, current_count, visited_chunks, depth = queue.popleft()
+            
+            if depth >= max_depth or len(current_path) >= max_length:
+                continue
+                
+            last_screen = current_path[-1]
+            
+            # Try to extend this path forward, but only with filtered chunks
+            for next_chunk in chunks_starting_with.get(last_screen, []):
+                next_path = next_chunk['path']
+                next_chunk_tuple = tuple(next_path)
+                
+                # Skip if we've already used this chunk
+                if next_chunk_tuple in visited_chunks:
+                    continue
+                
+                # Check for cycles: ensure no screen in next_path (except connecting one) already exists
+                current_screens = set(current_path)
+                next_screens = set(next_path[1:])  # Exclude first screen (connecting screen)
+                
+                if next_screens & current_screens:
+                    continue
+                
+                # Create extended path
+                extended_path = current_path + next_path[1:]  # Skip first element to avoid duplication
+                if len(extended_path) <= max_length:
+                    extended_count = min(current_count, next_chunk['count'])
+                    new_visited = visited_chunks | {next_chunk_tuple}
+                    
+                    # Add to queue for further extension
+                    queue.append((extended_path, extended_count, new_visited, depth + 1))
+                    
+                    # If this path ends with target, record it
+                    if extended_path[-1] == end_screen:
+                        extended_path_str = ' -> '.join(extended_path)
+                        if extended_path_str not in found_paths or found_paths[extended_path_str] < extended_count:
+                            found_paths[extended_path_str] = extended_count
+        
+        # Sort by frequency and path length
+        def sort_key(item):
+            path_str, count = item
+            path_length = len(path_str.split(' -> '))
+            return (count, path_length)   # Descending by count, longer paths preferred for ties
+        
+        # Filter to only show paths of 4+ steps for better results
+        min_length = 4
+        long_paths = {path_str: count for path_str, count in found_paths.items() 
+                     if len(path_str.split(' -> ')) >= min_length}
+        
+        # If no long paths found, fall back to shorter ones
+        if not long_paths and found_paths:
+            long_paths = found_paths
+        
+        sorted_paths = sorted(long_paths.items(), key=sort_key, reverse=True)[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
     def _find_chained_paths_to_screen_least_common(self, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
         """Chain together pre-aggregated chunks to find LEAST common paths leading to a specific screen."""
         from collections import defaultdict, deque
@@ -1526,40 +1634,15 @@ class FlowPathAnalyzer:
         Returns:
             List of (path, count) tuples sorted by frequency
         """
-        path_counts = defaultdict(int)
-        
-        # For field filtering, we need to access the original event data
-        if field_filter and not self.is_pre_aggregated:
-            # Need to rebuild the data structure to include event-level metadata
-            # This is more complex for raw event data, so let's implement it differently
+        if self.is_pre_aggregated and field_filter:
+            # For pre-aggregated data with filtering, use chaining with filtered chunks
+            return self._find_filtered_paths_to_screen(end_screen, field_filter, max_length, top_n)
+        elif not self.is_pre_aggregated and field_filter:
+            # For raw event data with filtering
             return self._find_paths_with_event_filter(end_screen, field_filter, max_length, top_n)
-        
-        for session in self.sessions:
-            screens = session['screens']
-            
-            # Find all occurrences of end_screen in this session
-            for j, screen in enumerate(screens):
-                if screen == end_screen:
-                    # Check if this screen event matches the filter criteria
-                    if field_filter:
-                        # For pre-aggregated data, check if session metadata matches filter
-                        filter_match = True
-                        for field, expected_value in field_filter.items():
-                            session_value = session.get(field)
-                            if session_value is None or str(session_value).lower() != str(expected_value).lower():
-                                filter_match = False
-                                break
-                        if not filter_match:
-                            continue
-                    
-                    # Look backwards to find possible starting points
-                    for i in range(max(0, j - max_length + 1), j):
-                        path = screens[i:j+1]
-                        if len(path) >= 2:  # At least start->end
-                            path_str = ' -> '.join(path)
-                            # Apply the count multiplier if available (for pre-aggregated data)
-                            count_multiplier = session.get('count', 1)
-                            path_counts[path_str] += count_multiplier
+        else:
+            # No filtering, use regular chaining method
+            return self._find_all_paths_to_screen(end_screen, max_length, top_n, ascending=False)
         
         # Sort by frequency and return top results
         sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
