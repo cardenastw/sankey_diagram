@@ -284,6 +284,80 @@ class FlowPathAnalyzer:
             
             return [(path.split(' -> '), count) for path, count in sorted_paths]
     
+    def find_paths_with_filter(self, start_screen: str, end_screen: str, field_filter: Dict[str, str] = None,
+                              max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
+        """Find paths from start to end screen with field filtering.
+        
+        Args:
+            start_screen: Starting screen name
+            end_screen: Ending screen name
+            field_filter: Dictionary of field->value filters to apply to sessions
+            max_length: Maximum path length to consider
+            max_paths: Maximum number of paths to return
+            
+        Returns:
+            List of (path, count) tuples sorted by frequency
+        """
+        if self.is_pre_aggregated:
+            # For pre-aggregated data, filter chunks by metadata and then chain
+            if field_filter:
+                # Filter chunks by metadata
+                filtered_chunks = []
+                for chunk in self.path_chunks:
+                    matches = True
+                    for field, expected_value in field_filter.items():
+                        if field in chunk['metadata']:
+                            chunk_value = chunk['metadata'][field]
+                            if str(chunk_value).lower() != str(expected_value).lower():
+                                matches = False
+                                break
+                    if matches:
+                        filtered_chunks.append(chunk)
+                
+                # Temporarily replace path_chunks for chaining
+                original_chunks = self.path_chunks
+                self.path_chunks = filtered_chunks
+                result = self._find_chained_paths(start_screen, end_screen, max_length, max_paths)
+                self.path_chunks = original_chunks
+                return result
+            else:
+                return self._find_chained_paths(start_screen, end_screen, max_length, max_paths)
+        else:
+            # For raw session data, filter sessions by metadata
+            if field_filter:
+                filtered_sessions = []
+                for session in self.sessions:
+                    matches = True
+                    for field, expected_value in field_filter.items():
+                        if field in session:
+                            session_value = session[field]
+                            if str(session_value).lower() != str(expected_value).lower():
+                                matches = False
+                                break
+                    if matches:
+                        filtered_sessions.append(session)
+            else:
+                filtered_sessions = self.sessions
+            
+            # Find paths in filtered sessions
+            flow_paths = defaultdict(int)
+            
+            for session in filtered_sessions:
+                screens = session['screens']
+                session_count = session.get('count', 1)
+                
+                for i, screen in enumerate(screens):
+                    if screen == start_screen:
+                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
+                            if screens[j] == end_screen:
+                                path = screens[i:j+1]
+                                path_str = ' -> '.join(path)
+                                flow_paths[path_str] += session_count
+                                break
+            
+            sorted_paths = sorted(flow_paths.items(), key=lambda x: x[1], reverse=True)[:max_paths]
+            return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
     def _find_chained_paths(self, start_screen: str, end_screen: str, max_length: int = 10, max_paths: int = 50) -> List[Tuple[List[str], int]]:
         """Chain together pre-aggregated chunks to find longer paths."""
         from collections import defaultdict, deque
@@ -912,6 +986,72 @@ class FlowPathAnalyzer:
         for session in self.sessions:
             screens = session['screens']
             session_count = session.get('count', 1)  # Use aggregated count
+            
+            # Find all occurrences of end_screen in this session
+            for j, screen in enumerate(screens):
+                if screen == end_screen:
+                    # Look backwards to find paths leading to this screen
+                    start_idx = max(0, j - max_length + 1)
+                    path = screens[start_idx:j+1]
+                    if len(path) >= 2:  # At least start->end
+                        path_str = ' -> '.join(path)
+                        path_counts[path_str] += session_count
+        
+        # Sort by frequency (ascending) and return bottom results
+        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1])[:top_n]
+        return [(path.split(' -> '), count) for path, count in sorted_paths]
+    
+    def find_least_common_paths_to_screen_with_filter(self, end_screen: str, 
+                                                     field_filter: Dict[str, str] = None,
+                                                     max_length: int = 10, 
+                                                     top_n: int = 10) -> List[Tuple[List[str], int]]:
+        """Find the least common paths that lead to a specific end screen with field filtering.
+        
+        Args:
+            end_screen: The target screen to find paths to
+            field_filter: Dictionary of field->value filters to apply to target screen events
+            max_length: Maximum path length to consider
+            top_n: Number of least common paths to return
+            
+        Returns:
+            List of (path, count) tuples sorted by frequency (ascending)
+        """
+        path_counts = defaultdict(int)
+        
+        # For field filtering, we need to access the original event data
+        if field_filter and not self.is_pre_aggregated:
+            # This is complex for raw event data, so let's implement a basic version
+            # that filters sessions by metadata fields
+            filtered_sessions = []
+            for session in self.sessions:
+                matches = True
+                for field, expected_value in field_filter.items():
+                    if field in session:
+                        session_value = session[field]
+                        if str(session_value).lower() != str(expected_value).lower():
+                            matches = False
+                            break
+                if matches:
+                    filtered_sessions.append(session)
+        elif field_filter and self.is_pre_aggregated:
+            # For pre-aggregated data, filter by chunk metadata
+            filtered_sessions = []
+            for session in self.sessions:
+                matches = True
+                for field, expected_value in field_filter.items():
+                    if field in session:
+                        session_value = session[field]
+                        if str(session_value).lower() != str(expected_value).lower():
+                            matches = False
+                            break
+                if matches:
+                    filtered_sessions.append(session)
+        else:
+            filtered_sessions = self.sessions
+        
+        for session in filtered_sessions:
+            screens = session['screens']
+            session_count = session.get('count', 1)
             
             # Find all occurrences of end_screen in this session
             for j, screen in enumerate(screens):

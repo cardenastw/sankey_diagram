@@ -41,8 +41,8 @@ class InteractiveFlowAnalyzer:
 Available commands:
   top-paths [N]                                 - Show N most common paths overall (default: 10)
   most-common-to <screen> [--where field=value]  - Find most common paths to a screen with optional filtering
-  least-common-to <screen> [N]                 - Find N least common paths to a screen (default: 5)
-  paths <start> <end>                           - Find paths from start to end screen
+  least-common-to <screen> [N] [--where field=value] - Find N least common paths to a screen (default: 5)
+  paths <start> <end> [--where field=value]    - Find paths from start to end screen
   
   Note: Use quotes for screen names with spaces (e.g., "DNA Others")
   stats                                         - Show flow statistics
@@ -67,7 +67,9 @@ Examples:
   most-common-to Products --where device=mobile
   least-common-to Cart
   least-common-to "DNA Others" 3
+  least-common-to Cart --where device=mobile
   paths Home Checkout
+  paths Home Checkout --where traffic_source=organic
   stats
   simulate --change Landing->Products 0.4
   simulate --increase Cart->Checkout 25 --goal OrderConfirmation
@@ -98,15 +100,23 @@ Examples:
         for i, (path, count) in enumerate(paths, 1):
             print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
-    def handle_least_common_to(self, screen: str, top_n: int = 5):
+    def handle_least_common_to(self, screen: str, top_n: int = 5, field_filter: dict = None):
         """Find the least common paths leading to a screen."""
-        paths = self.analyzer.find_least_common_paths_to_screen(screen, top_n=top_n)
+        if field_filter:
+            paths = self.analyzer.find_least_common_paths_to_screen_with_filter(
+                screen, field_filter=field_filter, top_n=top_n
+            )
+            filter_desc = ", ".join([f"{k}={v}" for k, v in field_filter.items()])
+            print(f"\n{len(paths)} least common paths leading to '{screen}' where {filter_desc}:")
+        else:
+            paths = self.analyzer.find_least_common_paths_to_screen(screen, top_n=top_n)
+            print(f"\n{len(paths)} least common paths leading to '{screen}':")
         
         if not paths:
-            print(f"No paths found leading to '{screen}'")
+            filter_msg = f" with filter {field_filter}" if field_filter else ""
+            print(f"No paths found leading to '{screen}'{filter_msg}")
             return
         
-        print(f"\n{len(paths)} least common paths leading to '{screen}':")
         for i, (path, count) in enumerate(paths, 1):
             print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
@@ -144,14 +154,22 @@ Examples:
             i += 1
         return goal_screens
     
-    def handle_paths(self, start: str, end: str, top_n: int = 5):
-        paths = self.analyzer.find_paths(start, end)
+    def handle_paths(self, start: str, end: str, top_n: int = 5, field_filter: dict = None):
+        if field_filter:
+            paths = self.analyzer.find_paths_with_filter(
+                start, end, field_filter=field_filter, max_paths=top_n
+            )
+            filter_desc = ", ".join([f"{k}={v}" for k, v in field_filter.items()])
+            print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}' where {filter_desc}:")
+        else:
+            paths = self.analyzer.find_paths(start, end)
+            print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}':")
         
         if not paths:
-            print(f"No paths found from '{start}' to '{end}'")
+            filter_msg = f" with filter {field_filter}" if field_filter else ""
+            print(f"No paths found from '{start}' to '{end}'{filter_msg}")
             return
         
-        print(f"\nTop {min(top_n, len(paths))} paths from '{start}' to '{end}':")
         for i, (path, count) in enumerate(paths[:top_n], 1):
             print(f"{i}. {' -> '.join(path)} (Count: {count})")
     
@@ -489,18 +507,32 @@ Examples:
                     self.handle_most_common_to(screen, top_n, field_filter)
                 elif command == 'least-common-to':
                     if len(parts) < 2:
-                        print("Usage: least-common-to <screen> [N]")
+                        print("Usage: least-common-to <screen> [N] [--where field=value]")
                         continue
                     screen = parts[1]
-                    top_n = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 5
-                    self.handle_least_common_to(screen, top_n)
+                    
+                    # Parse --where clauses
+                    field_filter = self._parse_where_clause(parts)
+                    
+                    # Extract top_n if provided (but not part of --where)
+                    remaining_parts = [p for p in parts[2:] if p != '--where' and '=' not in p]
+                    top_n = int(remaining_parts[0]) if remaining_parts and remaining_parts[0].isdigit() else 5
+                    
+                    self.handle_least_common_to(screen, top_n, field_filter)
                 elif command == 'paths':
                     if len(parts) < 3:
-                        print("Usage: paths <start> <end>")
+                        print("Usage: paths <start> <end> [--where field=value]")
                         continue
                     start, end = parts[1], parts[2]
-                    top_n = int(parts[3]) if len(parts) > 3 else 5
-                    self.handle_paths(start, end, top_n)
+                    
+                    # Parse --where clauses
+                    field_filter = self._parse_where_clause(parts)
+                    
+                    # Extract top_n if provided (but not part of --where)
+                    remaining_parts = [p for p in parts[3:] if p != '--where' and '=' not in p]
+                    top_n = int(remaining_parts[0]) if remaining_parts and remaining_parts[0].isdigit() else 5
+                    
+                    self.handle_paths(start, end, top_n, field_filter)
                 else:
                     print(f"Unknown command: {command}. Type 'help' for available commands.")
                     
