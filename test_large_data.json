@@ -1,0 +1,20 @@
+[
+    {
+        "path": ["person", "person", "person"],
+        "count": 75000000,
+        "traffic_source": "organic",
+        "user_type": "new"
+    },
+    {
+        "path": ["person", "checkout"],
+        "count": 5000000,
+        "traffic_source": "paid",
+        "user_type": "returning"
+    },
+    {
+        "path": ["home", "person", "checkout"],
+        "count": 2000000,
+        "traffic_source": "direct",
+        "user_type": "new"
+    }
+]

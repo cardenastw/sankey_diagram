@@ -7,17 +7,33 @@ from visualizer import FlowPathVisualizer
 
 
 class InteractiveFlowAnalyzer:
-    def __init__(self, data_source: str, is_pre_aggregated: bool = False):
-        self.analyzer = FlowPathAnalyzer(is_pre_aggregated=is_pre_aggregated)
-        print(f"Loading data from {data_source}...")
+    def __init__(self, data_source: str, is_pre_aggregated: bool = False, show_progress: bool = True):
+        self.show_progress = show_progress
+        
+        # Initialize analyzer with progress tracking
+        if show_progress:
+            print("Initializing analyzer...")
+        self.analyzer = FlowPathAnalyzer(is_pre_aggregated=is_pre_aggregated, show_progress=show_progress)
+        
+        # Load data with progress updates
+        if show_progress:
+            print(f"Loading data from {data_source}...")
         self.analyzer.load_data(data_source)
-        print("Data loaded successfully!")
+        if show_progress:
+            print("Data loaded successfully!")
         
         # Initialize Monte Carlo simulator and visualizer
+        if show_progress:
+            print("Initializing Monte Carlo simulator...")
         self.simulator = MonteCarloSimulator(self.analyzer)
+        if show_progress:
+            print("Monte Carlo simulator initialized!")
+        
+        if show_progress:
+            print("Initializing visualizer...")
         self.visualizer = FlowPathVisualizer(self.analyzer)
-        print("Monte Carlo simulator initialized!")
-        print("Visualizer initialized!")
+        if show_progress:
+            print("Visualizer initialized!")
         
     def show_help(self):
         print("""
@@ -360,11 +376,18 @@ def main():
                       help='Data source (file path or URL)')
     parser.add_argument('--pre-aggregated', action='store_true',
                       help='Treat data as pre-aggregated paths with counts instead of raw events')
+    parser.add_argument('--no-progress', action='store_true',
+                      help='Disable progress bars and verbose loading messages')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                      help='Minimal output, disable all progress indicators')
     
     args = parser.parse_args()
     
+    # Determine progress settings
+    show_progress = not args.no_progress and not args.quiet
+    
     try:
-        analyzer = InteractiveFlowAnalyzer(args.data, is_pre_aggregated=args.pre_aggregated)
+        analyzer = InteractiveFlowAnalyzer(args.data, is_pre_aggregated=args.pre_aggregated, show_progress=show_progress)
         analyzer.run()
     except Exception as e:
         print(f"Error: {e}")

@@ -5,6 +5,7 @@ import pandas as pd
 from typing import List, Tuple, Dict, Optional
 from collections import defaultdict
 import pydot
+from tqdm import tqdm
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
@@ -15,6 +16,7 @@ except ImportError:
 class FlowPathVisualizer:
     def __init__(self, analyzer):
         self.analyzer = analyzer
+        self.show_progress = getattr(analyzer, 'show_progress', True)
         
     def create_flow_diagram(self, start_screen: str, end_screen: str, 
                            top_n_paths: int = 5, output_file: Optional[str] = None):
@@ -159,6 +161,9 @@ class FlowPathVisualizer:
     def create_interactive_sankey(self, start_screen: str, end_screen: str, 
                                  top_n_paths: int = 10, output_file: Optional[str] = None, 
                                  simplified: bool = True):
+        if self.show_progress:
+            print(f"Creating Sankey diagram for {start_screen} → {end_screen}...")
+        
         paths = self.analyzer.find_paths(start_screen, end_screen)[:top_n_paths]
         
         if not paths:
@@ -282,6 +287,9 @@ class FlowPathVisualizer:
                                               top_n_paths: int = 10, context_steps: int = 3,
                                               output_file: Optional[str] = None):
         """Create a Sankey diagram including preceding context steps."""
+        
+        if self.show_progress:
+            print(f"Creating Sankey diagram with context for {start_screen} → {end_screen}...")
         
         # Get paths with context
         result = self.analyzer.find_paths_with_context(start_screen, end_screen, 
@@ -735,7 +743,8 @@ class FlowPathVisualizer:
         os.makedirs(output_dir, exist_ok=True)
         
         # First, create a combined chart with all values
-        print(f"Creating combined Sankey diagram for all {segment_field} values...")
+        if self.show_progress:
+            print(f"Creating combined Sankey diagram for all {segment_field} values...")
         all_paths = []
         for value, result in results_by_value.items():
             if include_context and 'full_journeys' in result:
@@ -751,11 +760,18 @@ class FlowPathVisualizer:
                                               f"{output_dir}/sankey_all_{segment_field}.html")
         
         # Then create individual charts for each field value
-        for value, result in results_by_value.items():
+        if self.show_progress:
+            value_items = list(results_by_value.items())
+            value_iterator = tqdm(value_items, desc=f"Creating {segment_field} charts", disable=not self.show_progress) if self.show_progress else value_items
+        else:
+            value_iterator = results_by_value.items()
+            
+        for value, result in value_iterator:
             if not result['paths']:
                 continue
             
-            print(f"Creating Sankey diagram for {segment_field}={value}...")
+            if self.show_progress:
+                print(f"Creating Sankey diagram for {segment_field}={value}...")
             
             value_color = value_colors.get(value, 'rgba(128, 128, 128, 0.8)')
             

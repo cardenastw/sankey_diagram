@@ -1,13 +1,14 @@
 import pandas as pd
 import numpy as np
 from collections import defaultdict, Counter
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional, Set, Callable
 import json
 import requests
+from tqdm import tqdm
 
 
 class FlowPathAnalyzer:
-    def __init__(self, is_pre_aggregated: bool = False):
+    def __init__(self, is_pre_aggregated: bool = False, show_progress: bool = True):
         self.sessions = []
         self.flow_paths = defaultdict(int)
         self.screen_transitions = defaultdict(lambda: defaultdict(int))
@@ -16,20 +17,43 @@ class FlowPathAnalyzer:
         self.sessions_by_segment = defaultdict(lambda: defaultdict(list))
         self.segment_values = defaultdict(set)
         self.is_pre_aggregated = is_pre_aggregated
+        self.show_progress = show_progress
         self.aggregated_paths = []  # Store pre-aggregated path data
         self.event_metadata = defaultdict(lambda: defaultdict(dict))  # session_id -> event_index -> metadata
         
-    def load_data(self, data_source):
+    def load_data(self, data_source, progress_callback: Optional[Callable[[str, float], None]] = None):
+        """Load data with optional progress tracking.
+        
+        Args:
+            data_source: File path, URL, or list of data
+            progress_callback: Optional callback function(message, percentage)
+        """
+        if progress_callback:
+            progress_callback("Starting data load...", 0.0)
+        elif self.show_progress:
+            print("Loading data...")
+        
         if isinstance(data_source, str):
             if data_source.startswith('http://') or data_source.startswith('https://'):
-                # Load from server
+                if progress_callback:
+                    progress_callback("Downloading from server...", 10.0)
+                elif self.show_progress:
+                    print("Downloading from server...")
                 response = requests.get(data_source)
                 response.raise_for_status()
                 data = response.json()
             elif data_source.endswith('.json'):
+                if progress_callback:
+                    progress_callback("Reading JSON file...", 10.0)
+                elif self.show_progress:
+                    print("Reading JSON file...")
                 with open(data_source, 'r') as f:
                     data = json.load(f)
             elif data_source.endswith('.csv'):
+                if progress_callback:
+                    progress_callback("Reading CSV file...", 10.0)
+                elif self.show_progress:
+                    print("Reading CSV file...")
                 df = pd.read_csv(data_source)
                 data = df.to_dict('records')
             else:
@@ -39,17 +63,31 @@ class FlowPathAnalyzer:
         else:
             raise ValueError("Data source must be a file path, URL, or list of dictionaries")
         
-        if self.is_pre_aggregated:
-            self._process_aggregated_data(data)
-        else:
-            self._process_sessions(data)
+        if progress_callback:
+            progress_callback("Data loaded, processing...", 30.0)
+        elif self.show_progress:
+            print(f"Data loaded ({len(data)} records), processing...")
         
-    def _process_sessions(self, data):
+        if self.is_pre_aggregated:
+            self._process_aggregated_data(data, progress_callback)
+        else:
+            self._process_sessions(data, progress_callback)
+        
+        if progress_callback:
+            progress_callback("Processing complete!", 100.0)
+        elif self.show_progress:
+            print("Processing complete!")
+        
+    def _process_sessions(self, data, progress_callback: Optional[Callable[[str, float], None]] = None):
         sessions_dict = defaultdict(list)
         session_sources = {}
         session_metadata = defaultdict(dict)
         
-        for event in data:
+        # Create progress bar for event processing
+        events_iterator = tqdm(data, desc="Processing events", disable=not self.show_progress) if self.show_progress else data
+        total_events = len(data) if hasattr(data, '__len__') else 0
+        
+        for event_idx, event in enumerate(events_iterator):
             session_id = event.get('session_id', event.get('user_id', 'default'))
             screen = event.get('screen', event.get('screen_view', event.get('page')))
             timestamp = event.get('timestamp', None)
@@ -89,8 +127,23 @@ class FlowPathAnalyzer:
                 # Store event metadata indexed by session and position
                 event_index = len(sessions_dict[session_id]) - 1
                 self.event_metadata[session_id][event_index] = event_metadata
+            
+            # Update progress callback if provided
+            if progress_callback and total_events > 0:
+                progress = 30.0 + (event_idx / total_events) * 40.0  # 30% to 70%
+                progress_callback(f"Processing events... ({event_idx + 1}/{total_events})", progress)
         
-        for session_id, screens in sessions_dict.items():
+        # Process sessions into final format
+        session_progress_msg = "Building session flows..."
+        if progress_callback:
+            progress_callback(session_progress_msg, 70.0)
+        elif self.show_progress:
+            print(session_progress_msg)
+        
+        sessions_iterator = tqdm(sessions_dict.items(), desc="Building sessions", disable=not self.show_progress) if self.show_progress else sessions_dict.items()
+        total_sessions = len(sessions_dict)
+        
+        for session_idx, (session_id, screens) in enumerate(sessions_iterator):
             if len(screens) > 1:
                 if screens[0]['timestamp']:
                     screens.sort(key=lambda x: x['timestamp'])
@@ -119,8 +172,13 @@ class FlowPathAnalyzer:
                     from_screen = screen_sequence[i]
                     to_screen = screen_sequence[i + 1]
                     self.screen_transitions[from_screen][to_screen] += 1
+            
+            # Update progress callback if provided
+            if progress_callback and total_sessions > 0:
+                progress = 70.0 + (session_idx / total_sessions) * 25.0  # 70% to 95%
+                progress_callback(f"Building sessions... ({session_idx + 1}/{total_sessions})", progress)
     
-    def _process_aggregated_data(self, data):
+    def _process_aggregated_data(self, data, progress_callback: Optional[Callable[[str, float], None]] = None):
         """Process pre-aggregated data format.
         
         Expected format:
@@ -134,7 +192,11 @@ class FlowPathAnalyzer:
             }
         ]
         """
-        for item in data:
+        # Create progress bar for aggregated data processing
+        items_iterator = tqdm(data, desc="Processing aggregated data", disable=not self.show_progress) if self.show_progress else data
+        total_items = len(data) if hasattr(data, '__len__') else 0
+        
+        for item_idx, item in enumerate(items_iterator):
             path = item.get('path', [])
             count = item.get('count', 1)
             
@@ -172,15 +234,19 @@ class FlowPathAnalyzer:
                     session_data[key] = value
                     self.segment_values[key].add(value)
             
-            # Simulate multiple sessions based on count
-            for _ in range(count):
-                self.sessions.append(session_data.copy())
-                self.sessions_by_source[traffic_source].append(session_data.copy())
-                
-                # Store in segment buckets
-                for field, value in session_data.items():
-                    if field not in ['session_id', 'screens', 'count']:
-                        self.sessions_by_segment[field][value].append(session_data.copy())
+            # Store single session with count for memory efficiency
+            self.sessions.append(session_data)
+            self.sessions_by_source[traffic_source].append(session_data)
+            
+            # Store in segment buckets
+            for field, value in session_data.items():
+                if field not in ['session_id', 'screens', 'count']:
+                    self.sessions_by_segment[field][value].append(session_data)
+            
+            # Update progress callback if provided
+            if progress_callback and total_items > 0:
+                progress = 30.0 + (item_idx / total_items) * 65.0  # 30% to 95%
+                progress_callback(f"Processing aggregated data... ({item_idx + 1}/{total_items})", progress)
     
     def find_paths(self, start_screen: str, end_screen: str, max_length: int = 10) -> List[Tuple[List[str], int]]:
         if self.is_pre_aggregated:
@@ -307,6 +373,7 @@ class FlowPathAnalyzer:
         
         for session in self.sessions:
             screens = session['screens']
+            session_count = session.get('count', 1)  # Use aggregated count
             
             for i, screen in enumerate(screens):
                 if screen == start_screen:
@@ -316,7 +383,7 @@ class FlowPathAnalyzer:
                             # Found a path from start to end
                             path = screens[i:j+1]
                             path_str = ' -> '.join(path)
-                            path_counts[path_str] += 1
+                            path_counts[path_str] += session_count
                             
                             # Get preceding context
                             preceding = self.get_preceding_steps(screens, start_screen, context_steps)
@@ -325,16 +392,16 @@ class FlowPathAnalyzer:
                                 context_str = ' -> '.join(preceding)
                                 if path_str not in context_paths:
                                     context_paths[path_str] = defaultdict(int)
-                                context_paths[path_str][context_str] += 1
+                                context_paths[path_str][context_str] += session_count
                                 
                                 # Create full journey
                                 full_journey = preceding + path
                                 journey_str = ' -> '.join(full_journey)
-                                journey_counts[journey_str] += 1
+                                journey_counts[journey_str] += session_count
                             else:
                                 # No preceding steps, just the path itself
                                 journey_str = path_str
-                                journey_counts[journey_str] += 1
+                                journey_counts[journey_str] += session_count
                             
                             break
         
@@ -388,6 +455,7 @@ class FlowPathAnalyzer:
             
             for session in source_sessions:
                 screens = session['screens']
+                session_count = session.get('count', 1)  # Use aggregated count
                 found_path = False
                 
                 for i, screen in enumerate(screens):
@@ -397,7 +465,7 @@ class FlowPathAnalyzer:
                                 found_path = True
                                 path = screens[i:j+1]
                                 path_str = ' -> '.join(path)
-                                path_counts[path_str] += 1
+                                path_counts[path_str] += session_count
                                 
                                 if include_context:
                                     preceding = self.get_preceding_steps(screens, start_screen, context_steps)
@@ -406,28 +474,31 @@ class FlowPathAnalyzer:
                                         context_str = ' -> '.join(preceding)
                                         if path_str not in context_paths:
                                             context_paths[path_str] = defaultdict(int)
-                                        context_paths[path_str][context_str] += 1
+                                        context_paths[path_str][context_str] += session_count
                                         
                                         full_journey = preceding + path
                                         journey_str = ' -> '.join(full_journey)
-                                        journey_counts[journey_str] += 1
+                                        journey_counts[journey_str] += session_count
                                     else:
-                                        journey_counts[path_str] += 1
+                                        journey_counts[path_str] += session_count
                                 
                                 break
                 
                 if found_path:
-                    sessions_with_path += 1
+                    sessions_with_path += session_count
             
             # Sort and format results
             sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)
             paths = [(path.split(' -> '), count) for path, count in sorted_paths]
             
+            # Calculate total sessions considering aggregated counts
+            total_sessions = sum(session.get('count', 1) for session in source_sessions)
+            
             result = {
                 'paths': paths,
-                'total_sessions': len(source_sessions),
+                'total_sessions': total_sessions,
                 'sessions_with_path': sessions_with_path,
-                'conversion_rate': (sessions_with_path / len(source_sessions) * 100) if source_sessions else 0
+                'conversion_rate': (sessions_with_path / total_sessions * 100) if total_sessions else 0
             }
             
             if include_context:
@@ -483,6 +554,7 @@ class FlowPathAnalyzer:
             
             for session in value_sessions:
                 screens = session['screens']
+                session_count = session.get('count', 1)  # Use aggregated count
                 found_path = False
                 
                 for i, screen in enumerate(screens):
@@ -492,7 +564,7 @@ class FlowPathAnalyzer:
                                 found_path = True
                                 path = screens[i:j+1]
                                 path_str = ' -> '.join(path)
-                                path_counts[path_str] += 1
+                                path_counts[path_str] += session_count
                                 
                                 if include_context:
                                     preceding = self.get_preceding_steps(screens, start_screen, context_steps)
@@ -501,28 +573,31 @@ class FlowPathAnalyzer:
                                         context_str = ' -> '.join(preceding)
                                         if path_str not in context_paths:
                                             context_paths[path_str] = defaultdict(int)
-                                        context_paths[path_str][context_str] += 1
+                                        context_paths[path_str][context_str] += session_count
                                         
                                         full_journey = preceding + path
                                         journey_str = ' -> '.join(full_journey)
-                                        journey_counts[journey_str] += 1
+                                        journey_counts[journey_str] += session_count
                                     else:
-                                        journey_counts[path_str] += 1
+                                        journey_counts[path_str] += session_count
                                 
                                 break
                 
                 if found_path:
-                    sessions_with_path += 1
+                    sessions_with_path += session_count
             
             # Sort and format results
             sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)
             paths = [(path.split(' -> '), count) for path, count in sorted_paths]
             
+            # Calculate total sessions considering aggregated counts
+            total_sessions = sum(session.get('count', 1) for session in value_sessions)
+            
             result = {
                 'paths': paths,
-                'total_sessions': len(value_sessions),
+                'total_sessions': total_sessions,
                 'sessions_with_path': sessions_with_path,
-                'conversion_rate': (sessions_with_path / len(value_sessions) * 100) if value_sessions else 0,
+                'conversion_rate': (sessions_with_path / total_sessions * 100) if total_sessions else 0,
                 'field_name': segment_field,
                 'field_value': value
             }
@@ -571,6 +646,7 @@ class FlowPathAnalyzer:
             
             for session in combo_sessions_list:
                 screens = session['screens']
+                session_count = session.get('count', 1)  # Use aggregated count
                 found_path = False
                 
                 for i, screen in enumerate(screens):
@@ -580,27 +656,30 @@ class FlowPathAnalyzer:
                                 found_path = True
                                 path = screens[i:j+1]
                                 path_str = ' -> '.join(path)
-                                path_counts[path_str] += 1
+                                path_counts[path_str] += session_count
                                 
                                 # Capture context if requested
                                 if include_context:
                                     context_start = max(0, i - context_steps)
                                     full_journey = screens[context_start:j+1]
                                     full_journey_str = ' -> '.join(full_journey)
-                                    full_journey_counts[full_journey_str] += 1
+                                    full_journey_counts[full_journey_str] += session_count
                                 break
                 
                 if found_path:
-                    sessions_with_path += 1
+                    sessions_with_path += session_count
             
             sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)
             paths = [(path.split(' -> '), count) for path, count in sorted_paths]
             
+            # Calculate total sessions considering aggregated counts
+            total_sessions = sum(session.get('count', 1) for session in combo_sessions_list)
+            
             result = {
                 'paths': paths,
-                'total_sessions': len(combo_sessions_list),
+                'total_sessions': total_sessions,
                 'sessions_with_path': sessions_with_path,
-                'conversion_rate': (sessions_with_path / len(combo_sessions_list) * 100) if combo_sessions_list else 0,
+                'conversion_rate': (sessions_with_path / total_sessions * 100) if total_sessions else 0,
                 'fields': segment_fields,
                 'combination': combo_key
             }
@@ -622,16 +701,24 @@ class FlowPathAnalyzer:
         return list(self.segment_values.get(field_name, set()))
     
     def get_statistics(self) -> Dict:
-        total_sessions = len(self.sessions)
-        avg_path_length = np.mean([len(s['screens']) for s in self.sessions]) if self.sessions else 0
+        # Calculate total sessions considering aggregated counts
+        total_sessions = sum(session.get('count', 1) for session in self.sessions) if self.is_pre_aggregated else len(self.sessions)
+        
+        # Calculate weighted average path length for aggregated data
+        if self.is_pre_aggregated:
+            total_length = sum(len(s['screens']) * s.get('count', 1) for s in self.sessions)
+            avg_path_length = total_length / total_sessions if total_sessions else 0
+        else:
+            avg_path_length = np.mean([len(s['screens']) for s in self.sessions]) if self.sessions else 0
         
         all_screens = set()
+        screen_visits = Counter()
+        
         for session in self.sessions:
             all_screens.update(session['screens'])
-        
-        screen_visits = Counter()
-        for session in self.sessions:
-            screen_visits.update(session['screens'])
+            session_count = session.get('count', 1)
+            for screen in session['screens']:
+                screen_visits[screen] += session_count
         
         return {
             'total_sessions': total_sessions,
@@ -658,6 +745,7 @@ class FlowPathAnalyzer:
         
         for session in self.sessions:
             screens = session['screens']
+            session_count = session.get('count', 1)  # Use aggregated count
             
             # Find all occurrences of end_screen in this session
             for j, screen in enumerate(screens):
@@ -667,7 +755,7 @@ class FlowPathAnalyzer:
                         path = screens[i:j+1]
                         if len(path) >= 2:  # At least start->end
                             path_str = ' -> '.join(path)
-                            path_counts[path_str] += 1
+                            path_counts[path_str] += session_count
         
         # Sort by frequency and return top results
         sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]

@@ -6,3 +6,4 @@ plotly
 pydot
 graphviz
 requests
+tqdm
