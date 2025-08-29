@@ -265,22 +265,31 @@ class FlowPathAnalyzer:
             # Chain chunks together to find longer paths
             return self._find_chained_paths(start_screen, end_screen, max_length, max_paths)
         else:
-            # Original implementation for raw event data
-            paths = []
+            # Enhanced implementation for raw event data - returns complete paths with all intermediate steps
+            path_counts = defaultdict(int)
             
             for session in self.sessions:
                 screens = session['screens']
+                session_count = session.get('count', 1)
                 
-                for i, screen in enumerate(screens):
-                    if screen == start_screen:
-                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                            if screens[j] == end_screen:
-                                path = screens[i:j+1]
-                                path_str = ' -> '.join(path)
-                                self.flow_paths[path_str] += 1
-                                break
+                # Find all occurrences of start_screen
+                start_indices = [i for i, screen in enumerate(screens) if screen == start_screen]
+                
+                for start_idx in start_indices:
+                    # Find all occurrences of end_screen after this start_screen
+                    end_indices = [j for j, screen in enumerate(screens[start_idx + 1:], start=start_idx + 1) 
+                                  if screen == end_screen and j - start_idx <= max_length]
+                    
+                    for end_idx in end_indices:
+                        # Get the complete path from start to end (including ALL intermediate steps)
+                        path = screens[start_idx:end_idx + 1]
+                        path_str = ' -> '.join(path)
+                        path_counts[path_str] += session_count
+                        
+                        # Only take the first end occurrence for each start to avoid duplicates
+                        break
             
-            sorted_paths = sorted(self.flow_paths.items(), key=lambda x: x[1], reverse=True)
+            sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:max_paths]
             
             return [(path.split(' -> '), count) for path, count in sorted_paths]
     
@@ -339,21 +348,29 @@ class FlowPathAnalyzer:
             else:
                 filtered_sessions = self.sessions
             
-            # Find paths in filtered sessions
+            # Find paths in filtered sessions - enhanced to return complete paths
             flow_paths = defaultdict(int)
             
             for session in filtered_sessions:
                 screens = session['screens']
                 session_count = session.get('count', 1)
                 
-                for i, screen in enumerate(screens):
-                    if screen == start_screen:
-                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                            if screens[j] == end_screen:
-                                path = screens[i:j+1]
-                                path_str = ' -> '.join(path)
-                                flow_paths[path_str] += session_count
-                                break
+                # Find all occurrences of start_screen
+                start_indices = [i for i, screen in enumerate(screens) if screen == start_screen]
+                
+                for start_idx in start_indices:
+                    # Find all occurrences of end_screen after this start_screen
+                    end_indices = [j for j, screen in enumerate(screens[start_idx + 1:], start=start_idx + 1) 
+                                  if screen == end_screen and j - start_idx <= max_length]
+                    
+                    for end_idx in end_indices:
+                        # Get the complete path from start to end (including ALL intermediate steps)
+                        path = screens[start_idx:end_idx + 1]
+                        path_str = ' -> '.join(path)
+                        flow_paths[path_str] += session_count
+                        
+                        # Only take the first end occurrence for each start to avoid duplicates
+                        break
             
             sorted_paths = sorted(flow_paths.items(), key=lambda x: x[1], reverse=True)[:max_paths]
             return [(path.split(' -> '), count) for path, count in sorted_paths]
@@ -621,7 +638,7 @@ class FlowPathAnalyzer:
             
         Returns:
             Dictionary with:
-                - paths: List of (path, count) tuples for start->end paths
+                - paths: List of (path, count) tuples for start->end paths (including all intermediate steps)
                 - context_paths: Dictionary mapping each path to its preceding context
                 - full_journeys: List of complete journeys (context + path)
         """
@@ -635,35 +652,41 @@ class FlowPathAnalyzer:
             screens = session['screens']
             session_count = session.get('count', 1)  # Use aggregated count
             
-            for i, screen in enumerate(screens):
-                if screen == start_screen:
-                    # Find if this start leads to the end
-                    for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                        if screens[j] == end_screen:
-                            # Found a path from start to end
-                            path = screens[i:j+1]
-                            path_str = ' -> '.join(path)
-                            path_counts[path_str] += session_count
-                            
-                            # Get preceding context
-                            preceding = self.get_preceding_steps(screens, start_screen, context_steps)
-                            
-                            if preceding:
-                                context_str = ' -> '.join(preceding)
-                                if path_str not in context_paths:
-                                    context_paths[path_str] = defaultdict(int)
-                                context_paths[path_str][context_str] += session_count
-                                
-                                # Create full journey
-                                full_journey = preceding + path
-                                journey_str = ' -> '.join(full_journey)
-                                journey_counts[journey_str] += session_count
-                            else:
-                                # No preceding steps, just the path itself
-                                journey_str = path_str
-                                journey_counts[journey_str] += session_count
-                            
-                            break
+            # Find all occurrences of start_screen
+            start_indices = [i for i, screen in enumerate(screens) if screen == start_screen]
+            
+            for start_idx in start_indices:
+                # Find all occurrences of end_screen after this start_screen
+                end_indices = [j for j, screen in enumerate(screens[start_idx + 1:], start=start_idx + 1) 
+                              if screen == end_screen and j - start_idx <= max_length]
+                
+                for end_idx in end_indices:
+                    # Get the complete path from start to end (including ALL intermediate steps)
+                    path = screens[start_idx:end_idx + 1]
+                    path_str = ' -> '.join(path)
+                    path_counts[path_str] += session_count
+                    
+                    # Get preceding context (all steps before start_screen, up to context_steps)
+                    context_start_idx = max(0, start_idx - context_steps)
+                    preceding = screens[context_start_idx:start_idx]
+                    
+                    if preceding:
+                        context_str = ' -> '.join(preceding)
+                        if path_str not in context_paths:
+                            context_paths[path_str] = defaultdict(int)
+                        context_paths[path_str][context_str] += session_count
+                        
+                        # Create full journey (context + complete path)
+                        full_journey = preceding + path
+                        journey_str = ' -> '.join(full_journey)
+                        journey_counts[journey_str] += session_count
+                    else:
+                        # No preceding steps, just the path itself
+                        journey_str = path_str
+                        journey_counts[journey_str] += session_count
+                    
+                    # Only take the first end occurrence for each start to avoid duplicates
+                    break
         
         # Sort paths by frequency
         sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)
@@ -718,31 +741,40 @@ class FlowPathAnalyzer:
                 session_count = session.get('count', 1)  # Use aggregated count
                 found_path = False
                 
-                for i, screen in enumerate(screens):
-                    if screen == start_screen:
-                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                            if screens[j] == end_screen:
-                                found_path = True
-                                path = screens[i:j+1]
-                                path_str = ' -> '.join(path)
-                                path_counts[path_str] += session_count
+                # Find all occurrences of start_screen
+                start_indices = [i for i, screen in enumerate(screens) if screen == start_screen]
+                
+                for start_idx in start_indices:
+                    # Find all occurrences of end_screen after this start_screen
+                    end_indices = [j for j, screen in enumerate(screens[start_idx + 1:], start=start_idx + 1) 
+                                  if screen == end_screen and j - start_idx <= max_length]
+                    
+                    for end_idx in end_indices:
+                        found_path = True
+                        # Get the complete path from start to end (including ALL intermediate steps)
+                        path = screens[start_idx:end_idx + 1]
+                        path_str = ' -> '.join(path)
+                        path_counts[path_str] += session_count
+                        
+                        if include_context:
+                            # Get preceding context (all steps before start_screen, up to context_steps)
+                            context_start_idx = max(0, start_idx - context_steps)
+                            preceding = screens[context_start_idx:start_idx]
+                            
+                            if preceding:
+                                context_str = ' -> '.join(preceding)
+                                if path_str not in context_paths:
+                                    context_paths[path_str] = defaultdict(int)
+                                context_paths[path_str][context_str] += session_count
                                 
-                                if include_context:
-                                    preceding = self.get_preceding_steps(screens, start_screen, context_steps)
-                                    
-                                    if preceding:
-                                        context_str = ' -> '.join(preceding)
-                                        if path_str not in context_paths:
-                                            context_paths[path_str] = defaultdict(int)
-                                        context_paths[path_str][context_str] += session_count
-                                        
-                                        full_journey = preceding + path
-                                        journey_str = ' -> '.join(full_journey)
-                                        journey_counts[journey_str] += session_count
-                                    else:
-                                        journey_counts[path_str] += session_count
-                                
-                                break
+                                full_journey = preceding + path
+                                journey_str = ' -> '.join(full_journey)
+                                journey_counts[journey_str] += session_count
+                            else:
+                                journey_counts[path_str] += session_count
+                        
+                        # Only take the first end occurrence for each start to avoid duplicates
+                        break
                 
                 if found_path:
                     sessions_with_path += session_count
@@ -817,31 +849,40 @@ class FlowPathAnalyzer:
                 session_count = session.get('count', 1)  # Use aggregated count
                 found_path = False
                 
-                for i, screen in enumerate(screens):
-                    if screen == start_screen:
-                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                            if screens[j] == end_screen:
-                                found_path = True
-                                path = screens[i:j+1]
-                                path_str = ' -> '.join(path)
-                                path_counts[path_str] += session_count
+                # Find all occurrences of start_screen
+                start_indices = [i for i, screen in enumerate(screens) if screen == start_screen]
+                
+                for start_idx in start_indices:
+                    # Find all occurrences of end_screen after this start_screen
+                    end_indices = [j for j, screen in enumerate(screens[start_idx + 1:], start=start_idx + 1) 
+                                  if screen == end_screen and j - start_idx <= max_length]
+                    
+                    for end_idx in end_indices:
+                        found_path = True
+                        # Get the complete path from start to end (including ALL intermediate steps)
+                        path = screens[start_idx:end_idx + 1]
+                        path_str = ' -> '.join(path)
+                        path_counts[path_str] += session_count
+                        
+                        if include_context:
+                            # Get preceding context (all steps before start_screen, up to context_steps)
+                            context_start_idx = max(0, start_idx - context_steps)
+                            preceding = screens[context_start_idx:start_idx]
+                            
+                            if preceding:
+                                context_str = ' -> '.join(preceding)
+                                if path_str not in context_paths:
+                                    context_paths[path_str] = defaultdict(int)
+                                context_paths[path_str][context_str] += session_count
                                 
-                                if include_context:
-                                    preceding = self.get_preceding_steps(screens, start_screen, context_steps)
-                                    
-                                    if preceding:
-                                        context_str = ' -> '.join(preceding)
-                                        if path_str not in context_paths:
-                                            context_paths[path_str] = defaultdict(int)
-                                        context_paths[path_str][context_str] += session_count
-                                        
-                                        full_journey = preceding + path
-                                        journey_str = ' -> '.join(full_journey)
-                                        journey_counts[journey_str] += session_count
-                                    else:
-                                        journey_counts[path_str] += session_count
-                                
-                                break
+                                full_journey = preceding + path
+                                journey_str = ' -> '.join(full_journey)
+                                journey_counts[journey_str] += session_count
+                            else:
+                                journey_counts[path_str] += session_count
+                        
+                        # Only take the first end occurrence for each start to avoid duplicates
+                        break
                 
                 if found_path:
                     sessions_with_path += session_count
@@ -909,22 +950,30 @@ class FlowPathAnalyzer:
                 session_count = session.get('count', 1)  # Use aggregated count
                 found_path = False
                 
-                for i, screen in enumerate(screens):
-                    if screen == start_screen:
-                        for j in range(i + 1, min(i + max_length + 1, len(screens))):
-                            if screens[j] == end_screen:
-                                found_path = True
-                                path = screens[i:j+1]
-                                path_str = ' -> '.join(path)
-                                path_counts[path_str] += session_count
-                                
-                                # Capture context if requested
-                                if include_context:
-                                    context_start = max(0, i - context_steps)
-                                    full_journey = screens[context_start:j+1]
-                                    full_journey_str = ' -> '.join(full_journey)
-                                    full_journey_counts[full_journey_str] += session_count
-                                break
+                # Find all occurrences of start_screen
+                start_indices = [i for i, screen in enumerate(screens) if screen == start_screen]
+                
+                for start_idx in start_indices:
+                    # Find all occurrences of end_screen after this start_screen
+                    end_indices = [j for j, screen in enumerate(screens[start_idx + 1:], start=start_idx + 1) 
+                                  if screen == end_screen and j - start_idx <= max_length]
+                    
+                    for end_idx in end_indices:
+                        found_path = True
+                        # Get the complete path from start to end (including ALL intermediate steps)
+                        path = screens[start_idx:end_idx + 1]
+                        path_str = ' -> '.join(path)
+                        path_counts[path_str] += session_count
+                        
+                        # Capture context if requested
+                        if include_context:
+                            context_start_idx = max(0, start_idx - context_steps)
+                            full_journey = screens[context_start_idx:end_idx + 1]
+                            full_journey_str = ' -> '.join(full_journey)
+                            full_journey_counts[full_journey_str] += session_count
+                        
+                        # Only take the first end occurrence for each start to avoid duplicates
+                        break
                 
                 if found_path:
                     sessions_with_path += session_count
@@ -999,26 +1048,61 @@ class FlowPathAnalyzer:
             top_n: Number of top paths to return
             
         Returns:
-            List of (path, count) tuples sorted by frequency
+            List of (path, count) tuples sorted by frequency, prioritizing longer complete paths
         """
         path_counts = defaultdict(int)
+        session_paths = []  # Store (session_id, path, count) for deduplication
         
         for session in self.sessions:
             screens = session['screens']
             session_count = session.get('count', 1)  # Use aggregated count
+            session_id = session.get('session_id', id(session))
             
             # Find all occurrences of end_screen in this session
             for j, screen in enumerate(screens):
                 if screen == end_screen:
-                    # Look backwards to find possible starting points
-                    for i in range(max(0, j - max_length + 1), j):
-                        path = screens[i:j+1]
-                        if len(path) >= 2:  # At least start->end
-                            path_str = ' -> '.join(path)
-                            path_counts[path_str] += session_count
+                    # Find the longest possible path to this end_screen occurrence
+                    # Start from the beginning of the session or max_length steps back
+                    start_idx = max(0, j - max_length + 1)
+                    
+                    # Try to find a meaningful starting point (avoid starting mid-flow)
+                    # Look for natural break points or start from beginning
+                    if start_idx > 0:
+                        # Look for a good starting point in the last few steps
+                        potential_starts = []
+                        for i in range(max(0, j - max_length + 1), j):
+                            # Add this as a potential starting point
+                            potential_starts.append(i)
+                        
+                        # Prefer longer paths - start from the earliest reasonable point
+                        start_idx = potential_starts[0] if potential_starts else start_idx
+                    
+                    # Create the complete path to this end screen
+                    path = screens[start_idx:j+1]
+                    if len(path) >= 2:  # At least start->end
+                        path_str = ' -> '.join(path)
+                        # Only record one path per session per end_screen occurrence to avoid double-counting
+                        session_paths.append((session_id, j, path_str, session_count))
         
-        # Sort by frequency and return top results
-        sorted_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        # Deduplicate by session and end_screen occurrence, keeping the longest path
+        session_occurrence_paths = {}
+        for session_id, end_idx, path_str, session_count in session_paths:
+            key = (session_id, end_idx)
+            if key not in session_occurrence_paths or len(path_str.split(' -> ')) > len(session_occurrence_paths[key][0].split(' -> ')):
+                session_occurrence_paths[key] = (path_str, session_count)
+        
+        # Count deduplicated paths
+        for path_str, session_count in session_occurrence_paths.values():
+            path_counts[path_str] += session_count
+        
+        # Sort by a combination of frequency and path length (prioritize longer paths)
+        def sort_key(item):
+            path_str, count = item
+            path_length = len(path_str.split(' -> '))
+            # Primary sort by count, secondary sort by length (longer paths preferred)
+            return (count, path_length)
+        
+        sorted_paths = sorted(path_counts.items(), key=sort_key, reverse=True)[:top_n]
         return [(path.split(' -> '), count) for path, count in sorted_paths]
     
     def find_least_common_paths_to_screen(self, end_screen: str, max_length: int = 10, 
